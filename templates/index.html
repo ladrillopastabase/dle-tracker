@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DLE Games Tracker</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
+  <script>
+    // Aplica el tema antes de pintar para evitar parpadeo.
+    try {
+      const t = localStorage.getItem("dle-theme");
+      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+  <div class="layout">
+    <nav class="sidebar" aria-label="Navegación principal">
+      <a class="brand" href="#/dashboard"><span aria-hidden="true">🎮</span> DLE Games</a>
+      <a class="nav-link" href="#/dashboard" data-route="dashboard"><span class="nav-ico" aria-hidden="true">🏠</span><span>Dashboard</span></a>
+      <a class="nav-link" href="#/games" data-route="games"><span class="nav-ico" aria-hidden="true">🕹️</span><span><span class="nav-full">Mis juegos</span><span class="nav-short">Juegos</span></span></a>
+      <a class="nav-link" href="#/history" data-route="history"><span class="nav-ico" aria-hidden="true">📜</span><span>Historial</span></a>
+      <a class="nav-link" href="#/stats" data-route="stats"><span class="nav-ico" aria-hidden="true">📊</span><span><span class="nav-full">Estadísticas</span><span class="nav-short">Stats</span></span></a>
+      <a class="nav-link" href="#/calendar" data-route="calendar"><span class="nav-ico" aria-hidden="true">📅</span><span>Calendario</span></a>
+      <a class="nav-link nav-settings" href="#/settings" data-route="settings"><span class="nav-ico" aria-hidden="true">⚙️</span><span><span class="nav-full">Configuración</span><span class="nav-short">Ajustes</span></span></a>
+    </nav>
+
+    <main id="view" class="content" tabindex="-1" aria-live="polite"></main>
+  </div>
+
+  <!-- Formulario de juego (crear / editar) -->
+  <dialog id="game-dialog" class="modal">
+    <form id="game-form" method="dialog" novalidate>
+      <header class="modal-head">
+        <h2 id="game-form-title">Agregar juego</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Cerrar">✕</button>
+      </header>
+      <div class="form-error" role="alert" hidden></div>
+      <div class="row-2">
+        <label class="field grow">Nombre
+          <input name="name" required maxlength="80" placeholder="Wordle" autocomplete="off">
+        </label>
+        <label class="field icon-field">Icono
+          <input name="icon" maxlength="16" placeholder="🟩">
+        </label>
+      </div>
+      <label class="field">URL
+        <input name="url" type="url" maxlength="500" placeholder="https://…">
+      </label>
+      <label class="field">Categoría
+        <input name="category" maxlength="50" placeholder="Palabras" list="category-list" autocomplete="off">
+        <datalist id="category-list"></datalist>
+      </label>
+      <label class="field">Descripción
+        <input name="description" maxlength="500" placeholder="Juego diario de palabras">
+      </label>
+      <fieldset class="field">
+        <legend>Métricas que registra</legend>
+        <div class="chips">
+          <label class="check"><input type="checkbox" name="track_attempts"> Intentos</label>
+          <label class="check"><input type="checkbox" name="track_errors"> Errores</label>
+          <label class="check"><input type="checkbox" name="track_score"> Puntaje</label>
+          <label class="check"><input type="checkbox" name="track_time"> Tiempo</label>
+        </div>
+      </fieldset>
+      <div class="row-2">
+        <label class="field grow">Métrica principal
+          <select name="primary_metric"></select>
+        </label>
+        <label class="check align-end"><input type="checkbox" name="lower_is_better"> Menor es mejor</label>
+      </div>
+      <label class="check" id="active-field"><input type="checkbox" name="active"> Activo (aparece en el dashboard)</label>
+      <footer class="modal-foot">
+        <button type="button" class="btn ghost" data-close>Cancelar</button>
+        <button type="submit" class="btn primary">Guardar</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Formulario de partida (registrar / editar) -->
+  <dialog id="session-dialog" class="modal">
+    <form id="session-form" method="dialog" novalidate>
+      <header class="modal-head">
+        <h2 id="session-form-title">Registrar resultado</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Cerrar">✕</button>
+      </header>
+      <div class="form-error" role="alert" hidden></div>
+      <label class="field" id="session-game-field">Juego
+        <select name="game_id"></select>
+      </label>
+      <label class="field">Fecha
+        <input name="played_at" type="date" required>
+      </label>
+      <div class="field">
+        <span class="field-label">Resultado</span>
+        <div class="segmented" role="radiogroup" aria-label="Resultado">
+          <label><input type="radio" name="result" value="win"><span>✅ Victoria</span></label>
+          <label><input type="radio" name="result" value="loss"><span>❌ Derrota</span></label>
+        </div>
+      </div>
+      <div id="metric-fields"></div>
+      <details class="notes" id="notes-details">
+        <summary>Notas</summary>
+        <textarea name="notes" rows="2" maxlength="1000" placeholder="Opcional"></textarea>
+      </details>
+      <footer class="modal-foot">
+        <button type="button" class="btn danger ghost" id="session-delete" hidden>Eliminar</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost" data-close>Cancelar</button>
+        <button type="submit" class="btn primary">Guardar</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Confirmación -->
+  <dialog id="confirm-dialog" class="modal small">
+    <form method="dialog">
+      <h2 id="confirm-title">¿Seguro?</h2>
+      <p id="confirm-text"></p>
+      <footer class="modal-foot">
+        <button value="cancel" class="btn ghost">Cancelar</button>
+        <button value="ok" class="btn danger">Eliminar</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <div id="toasts" class="toasts" aria-live="assertive"></div>
+
+  <script src="/static/vendor/chart.umd.min.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
