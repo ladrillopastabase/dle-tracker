@@ -31,6 +31,19 @@ rachas, estadísticas y evolución.
 
 ## Instalación y ejecución
 
+Con **conda** (recomendado si ya usas Anaconda/Miniconda):
+
+```bash
+conda env create -f environment.yml
+conda activate dle-tracker
+uvicorn app.main:app --reload
+```
+
+Para actualizar el entorno si cambia `environment.yml`:
+`conda env update -f environment.yml --prune`.
+
+Con **pip**:
+
 ```bash
 python -m venv .venv && source .venv/bin/activate   # opcional
 pip install -r requirements.txt
