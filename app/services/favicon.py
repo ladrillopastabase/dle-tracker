@@ -7,10 +7,18 @@
    y descarga el primero que resulte ser una imagen válida.
 
 La descarga HTTP pasa por ``http_get`` para poder sustituirla en los tests.
+
+Seguridad: como cualquiera puede indicar una URL, el servidor solo visita
+direcciones públicas de internet (nada de localhost, redes privadas ni la IP
+de metadatos de la nube), y lo comprueba en cada redirección. Para pruebas
+locales se puede desactivar con DLE_ALLOW_PRIVATE_FETCH=1.
 """
 
+import ipaddress
 import json
+import os
 import re
+import socket
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
@@ -21,6 +29,7 @@ TIMEOUT = httpx.Timeout(6.0, connect=4.0)
 MAX_HTML_BYTES = 1_500_000
 MAX_ICON_BYTES = 1_000_000
 MAX_ATTEMPTS = 6
+MAX_REDIRECTS = 5
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/126.0 Safari/537.36 dle-tracker"
@@ -46,18 +55,53 @@ class Candidate:
         return self.size
 
 
+# Los tests pueden inyectar un httpx.MockTransport.
+_transport: httpx.BaseTransport | None = None
+
+
+class BlockedURL(ValueError):
+    """La URL apunta a una dirección no pública."""
+
+
+def check_public_url(url: str) -> None:
+    """Lanza BlockedURL si la URL no es http(s) o resuelve a una IP no pública."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise BlockedURL(url)
+    if os.environ.get("DLE_ALLOW_PRIVATE_FETCH") == "1":
+        return
+    try:
+        infos = socket.getaddrinfo(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
+    except (socket.gaierror, UnicodeError) as exc:
+        raise BlockedURL(url) from exc
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0].split("%")[0])
+        if not ip.is_global or ip.is_multicast:
+            raise BlockedURL(url)
+
+
 def http_get(url: str, max_bytes: int) -> tuple[bytes, str, str]:
-    """GET con límite de tamaño. Devuelve (contenido, content-type, url final)."""
-    with httpx.Client(timeout=TIMEOUT, follow_redirects=True, headers={"User-Agent": USER_AGENT}) as client:
-        with client.stream("GET", url) as response:
-            response.raise_for_status()
-            chunks, total = [], 0
-            for chunk in response.iter_bytes():
-                total += len(chunk)
-                if total > max_bytes:
-                    raise ValueError("respuesta demasiado grande")
-                chunks.append(chunk)
-            return b"".join(chunks), response.headers.get("content-type", ""), str(response.url)
+    """GET con límite de tamaño. Devuelve (contenido, content-type, url final).
+
+    Las redirecciones se siguen a mano para validar cada destino.
+    """
+    with httpx.Client(timeout=TIMEOUT, follow_redirects=False, headers={"User-Agent": USER_AGENT},
+                      transport=_transport) as client:
+        for _ in range(MAX_REDIRECTS + 1):
+            check_public_url(url)
+            with client.stream("GET", url) as response:
+                if response.is_redirect and response.headers.get("location"):
+                    url = urljoin(url, response.headers["location"])
+                    continue
+                response.raise_for_status()
+                chunks, total = [], 0
+                for chunk in response.iter_bytes():
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise ValueError("respuesta demasiado grande")
+                    chunks.append(chunk)
+                return b"".join(chunks), response.headers.get("content-type", ""), str(response.url)
+        raise ValueError("demasiadas redirecciones")
 
 
 # ------------------------------------------------------------------ parsing

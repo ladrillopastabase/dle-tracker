@@ -1,6 +1,7 @@
 """Esquemas Pydantic: validación de entrada y forma de las respuestas."""
 
 import math
+import re
 from datetime import date, datetime
 from typing import Literal
 from urllib.parse import urlparse
@@ -40,16 +41,41 @@ def _clean_name(value: str | None) -> str | None:
     return value
 
 
-def _not_future(value: date | None) -> date | None:
-    if value is not None and value > date.today():
-        raise ValueError("La fecha no puede estar en el futuro")
-    return value
-
-
 def _finite(value: float | None) -> float | None:
     if value is not None and not math.isfinite(value):
         raise ValueError("El puntaje debe ser un número válido")
     return value
+
+
+# ---------------------------------------------------------------- cuentas
+
+
+class AccountIn(BaseModel):
+    username: str = Field(min_length=3, max_length=30)
+    password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("username")
+    @classmethod
+    def _username(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not re.fullmatch(r"[a-z0-9_.-]{3,30}", value):
+            raise ValueError("El usuario solo puede tener letras, números, «_», «.» y «-» (3 a 30)")
+        return value
+
+
+class LoginIn(BaseModel):
+    username: str = Field(max_length=30)
+    password: str = Field(max_length=128)
+
+
+class PasswordIn(BaseModel):
+    password: str = Field(max_length=128)
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    username: str
 
 
 # ---------------------------------------------------------------- juegos
@@ -136,7 +162,6 @@ class SessionFields(BaseModel):
     time_seconds: int | None = Field(default=None, ge=0, le=86400)
     notes: str | None = Field(default=None, max_length=1000)
 
-    _date = field_validator("played_at")(_not_future)
     _score = field_validator("score")(_finite)
 
 

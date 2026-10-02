@@ -1,5 +1,6 @@
 import json
 
+import httpx
 import pytest
 from sqlalchemy import create_engine, inspect, text
 
@@ -159,22 +160,20 @@ def test_game_created_even_if_icon_fails(client, icon_source):
     assert client.get(f"/api/games/{response.json()['id']}/icon").status_code == 404
 
 
-def test_icon_refetched_when_url_changes_and_files_cleaned(client, icon_source):
+def test_icon_refetched_when_url_changes(client, icon_source):
     icon_source["https://a.example/"] = PNG
     icon_source["https://b.example/"] = ICO
     game = client.post("/api/games", json={"name": "X", "url": "https://a.example/"}).json()
-    first = sorted(ICONS_DIR.glob(f"game-{game['id']}-*"))
-    assert len(first) == 1
+    assert client.get(game["icon_url"]).content == PNG
 
     updated = client.put(f"/api/games/{game['id']}", json={"url": "https://b.example/"}).json()
     assert updated["icon_url"] != game["icon_url"]
     assert client.get(updated["icon_url"]).content == ICO
-    assert not first[0].exists()
+    assert client.get(updated["icon_url"]).headers["content-type"] == "image/x-icon"
 
-    # Sin URL no hay icono.
+    # Otros cambios no tocan el icono; quitar la URL lo elimina.
+    assert client.put(f"/api/games/{game['id']}", json={"category": "x"}).json()["icon_url"] == updated["icon_url"]
     assert client.put(f"/api/games/{game['id']}", json={"url": None}).json()["icon_url"] is None
-    client.delete(f"/api/games/{game['id']}")
-    assert not list(ICONS_DIR.glob(f"game-{game['id']}-*"))
 
 
 def test_refresh_and_remove_icon_endpoints(client, icon_source):
@@ -196,9 +195,89 @@ def test_fetch_missing_icons(client, icon_source):
     assert client.post("/api/games/icons/fetch-missing").json() == {"updated": ["A"], "failed": ["B"]}
 
 
-def test_ensure_schema_adds_icon_column_to_old_database(tmp_path):
+# ------------------------------------------------------------- SSRF
+
+
+@pytest.mark.parametrize("url", [
+    "http://127.0.0.1/", "http://localhost:8000/", "http://10.0.0.5/", "http://192.168.1.1/",
+    "http://169.254.169.254/latest/meta-data/", "http://[::1]/", "http://0.0.0.0/",
+    "ftp://example.com/", "file:///etc/passwd", "http:///nohost",
+])
+def test_private_and_odd_urls_blocked(url):
+    with pytest.raises(favicon.BlockedURL):
+        favicon.check_public_url(url)
+
+
+def test_public_ip_allowed():
+    favicon.check_public_url("https://93.184.216.34/")
+
+
+def test_redirect_to_private_address_blocked(monkeypatch):
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx.Response(302, headers={"location": "http://169.254.169.254/latest/meta-data/"})
+
+    monkeypatch.setattr(favicon, "_transport", httpx.MockTransport(handler))
+    with pytest.raises(favicon.BlockedURL):
+        favicon.http_get("http://93.184.216.34/", 1000)
+    assert seen == ["http://93.184.216.34/"]  # nunca se pidió la IP interna
+
+
+def test_redirects_followed_and_size_limited(monkeypatch):
+    def handler(request):
+        if request.url.path == "/":
+            return httpx.Response(301, headers={"location": "/icon.png"})
+        return httpx.Response(200, content=PNG)
+
+    monkeypatch.setattr(favicon, "_transport", httpx.MockTransport(handler))
+    data, _, final = favicon.http_get("http://93.184.216.34/", 1000)
+    assert data == PNG and final.endswith("/icon.png")
+    with pytest.raises(ValueError):
+        favicon.http_get("http://93.184.216.34/", 10)
+
+
+# -------------------------------------------------------- migración
+
+
+def test_migrates_single_user_database(tmp_path):
+    """Una base de la versión anterior conserva sus datos y queda lista para cuentas."""
     engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
     with engine.begin() as conn:
-        conn.execute(text("CREATE TABLE games (id INTEGER PRIMARY KEY, name VARCHAR(80))"))
+        conn.execute(text("""CREATE TABLE games (
+            id INTEGER PRIMARY KEY, name VARCHAR(80) NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '',
+            url VARCHAR(500), category VARCHAR(50) NOT NULL DEFAULT '', icon VARCHAR(16) NOT NULL DEFAULT '',
+            active BOOLEAN NOT NULL DEFAULT 1, track_attempts BOOLEAN NOT NULL DEFAULT 1,
+            track_score BOOLEAN NOT NULL DEFAULT 0, track_time BOOLEAN NOT NULL DEFAULT 0,
+            track_errors BOOLEAN NOT NULL DEFAULT 0, primary_metric VARCHAR(20) NOT NULL DEFAULT 'attempts',
+            lower_is_better BOOLEAN NOT NULL DEFAULT 1, created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            icon_file VARCHAR(120))"""))
+        conn.execute(text("""CREATE TABLE game_sessions (
+            id INTEGER PRIMARY KEY, game_id INTEGER NOT NULL REFERENCES games (id) ON DELETE CASCADE,
+            played_at DATE NOT NULL, result VARCHAR(10) NOT NULL, score FLOAT, attempts INTEGER,
+            errors INTEGER, time_seconds INTEGER, notes TEXT NOT NULL DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL)"""))
+        conn.execute(text("INSERT INTO games (id, name, icon, icon_file) VALUES (1, 'Wordle', 'W', 'game-1-abc.png')"))
+        conn.execute(text("INSERT INTO game_sessions (game_id, played_at, result, attempts) VALUES (1, '2026-10-01', 'win', 3)"))
+    ICONS_DIR.mkdir(parents=True, exist_ok=True)
+    (ICONS_DIR / "game-1-abc.png").write_bytes(PNG)
+
     ensure_schema(engine)
-    assert "icon_file" in {c["name"] for c in inspect(engine).get_columns("games")}
+    ensure_schema(engine)  # idempotente
+
+    with engine.begin() as conn:
+        conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+        assert conn.execute(text("SELECT name, user_id, icon_data FROM games")).one() == ("Wordle", None, PNG)
+        assert conn.execute(text("SELECT attempts FROM game_sessions")).scalar() == 3
+        # Las FK de game_sessions siguen apuntando a la tabla games nueva.
+        assert conn.execute(text("PRAGMA foreign_key_check")).fetchall() == []
+        # El nombre ya solo es único por usuario.
+        conn.execute(text("INSERT INTO users (id, username, password_hash) VALUES (1, 'a', 'x'), (2, 'b', 'x')"))
+        conn.execute(text("UPDATE games SET user_id = 1"))
+        conn.execute(text("INSERT INTO games (user_id, name, icon, active, track_attempts, track_score, track_time,"
+                          " track_errors, primary_metric, lower_is_better, description, category)"
+                          " VALUES (2, 'Wordle', 'W', 1, 1, 0, 0, 0, 'attempts', 1, '', '')"))
+        conn.execute(text("DELETE FROM games WHERE id = 1"))
+        assert conn.execute(text("SELECT COUNT(*) FROM game_sessions")).scalar() == 0  # cascade intacto
+    assert {"users", "auth_tokens"} <= set(inspect(engine).get_table_names())

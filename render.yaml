@@ -1,0 +1,15 @@
+# Blueprint de Render (https://render.com): New → Blueprint → elige este repositorio.
+# La base de datos va aparte (p. ej. Neon, gratis): pega su URL en DATABASE_URL.
+services:
+  - type: web
+    name: dle-tracker
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips '*'
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: DATABASE_URL
+        sync: false  # Render la pide al crear el servicio

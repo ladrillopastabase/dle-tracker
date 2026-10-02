@@ -20,8 +20,13 @@ const ROUTE_PATH = {
 };
 const NAV_ORDER = ["dashboard", "games", "roulette", "history", "stats", "calendar", "settings"];
 const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)");
+// El servidor calcula "hoy" (y las rachas) con la zona horaria del navegador.
+const TIMEZONE = (() => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { return ""; }
+})();
 
 const state = {
+  user: null,
   games: [],
   overview: null,
   today: localISO(new Date()),
@@ -145,7 +150,7 @@ function cssVar(name) {
 }
 
 function userName() {
-  try { return localStorage.getItem("dle-user") || "player"; } catch { return "player"; }
+  return state.user?.username || "guest";
 }
 
 /* ================================================================ piezas de UI */
@@ -188,8 +193,11 @@ function typewrite(el) {
 
 /* ================================================================ API */
 
+/** La sesión no existe o caducó: hay que mostrar el login. */
+class AuthRequired extends Error {}
+
 async function api(path, options = {}) {
-  const init = { headers: {}, ...options };
+  const init = { ...options, headers: { "X-Timezone": TIMEZONE, ...(options.headers || {}) } };
   if (init.body && typeof init.body !== "string") {
     init.body = JSON.stringify(init.body);
     init.headers["Content-Type"] = "application/json";
@@ -201,6 +209,11 @@ async function api(path, options = {}) {
     throw new Error("No se pudo conectar con el servidor. ¿Está en ejecución?");
   }
   if (response.status === 204) return null;
+  if (response.status === 401 && !path.startsWith("/api/auth/")) {
+    state.user = null;
+    showLogin();
+    throw new AuthRequired("Inicia sesión para continuar");
+  }
   const data = await response.json().catch(() => null);
   if (!response.ok) {
     const detail = data?.detail;
@@ -425,9 +438,18 @@ async function router() {
     a.classList.toggle("active", active);
     if (active) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
-  $("#titlebar-text").textContent = `${userName()}@dle: ${ROUTE_PATH[name]}`;
   destroyCharts();
   const view = $("#view");
+  if (!state.user) {
+    try {
+      state.user = await api("/api/auth/me");
+    } catch {
+      showLogin();
+      return;
+    }
+  }
+  document.body.classList.remove("logged-out");
+  $("#titlebar-text").textContent = `${userName()}@dle: ${ROUTE_PATH[name]}`;
   try {
     await loadGames();
     const html = await routes[name](param);
@@ -436,11 +458,90 @@ async function router() {
     $$("[data-text]", view).forEach(typewrite);
     afterRender[name]?.(param);
   } catch (err) {
+    if (err instanceof AuthRequired) return;
     view.innerHTML = `<div class="view">${pane("error", `<p class="c-loss">${esc(err.message)}</p>`)}</div>`;
   }
 }
 
 const refresh = () => router();
+
+/* ================================================================ login */
+
+function showLogin(mode = "login") {
+  document.querySelectorAll("dialog[open]").forEach((d) => d.close());
+  document.body.classList.add("logged-out");
+  destroyCharts();
+  $("#titlebar-text").textContent = "dle-tracker: login";
+  const register = mode === "register";
+  $("#view").innerHTML = `
+    <div class="view login">
+      ${pane(register ? "useradd" : "tty1", `
+        <div class="login-head">
+          <span data-mascot="${register ? "happy" : "idle"}" data-scale="7"></span>
+          <div>
+            <div class="accent"><b>dle_tracker</b> <span class="muted">3.0 (tty1)</span></div>
+            <p class="dim small">Registra tus juegos diarios, rachas y estadísticas.<br>Cada cuenta tiene sus propios datos.</p>
+          </div>
+        </div>
+        <form id="login-form" novalidate autocomplete="on">
+          <div class="form-error" role="alert" hidden></div>
+          <label class="login-line"><span>${register ? "nuevo usuario:" : "dle login:"}</span>
+            <input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="30" required></label>
+          <label class="login-line"><span>${register ? "contraseña:" : "password:"}</span>
+            <input name="password" type="password" autocomplete="${register ? "new-password" : "current-password"}" maxlength="128" required></label>
+          ${register ? `<label class="login-line"><span>repetir:</span>
+            <input name="password2" type="password" autocomplete="new-password" maxlength="128" required></label>
+            <p class="muted small">usuario: 3-30 caracteres (a-z, 0-9, _ . -) · contraseña: mínimo 8</p>` : ""}
+          <div class="card-actions" style="margin-top:14px">
+            <button class="btn primary big" type="submit">${register ? "crear cuenta ⏎" : "entrar ⏎"}</button>
+            <button class="btn" type="button" data-login-mode="${register ? "login" : "register"}">
+              ${register ? "ya tengo cuenta" : "crear cuenta"}</button>
+          </div>
+        </form>`)}
+    </div>`;
+  Mascot.mountAll($("#view"));
+  const form = $("#login-form");
+  form.elements.username.focus();
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const el = form.elements;
+    const username = el.username.value.trim();
+    const password = el.password.value;
+    if (!username || !password) return showFormError(form, "Escribe usuario y contraseña.");
+    if (register && password !== el.password2.value) return showFormError(form, "Las contraseñas no coinciden.");
+    const submit = form.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    try {
+      state.user = await api(`/api/auth/${register ? "register" : "login"}`, { method: "POST", body: { username, password } });
+      if (!location.hash || register) history.replaceState(null, "", "#/dashboard");
+      router();
+      if (register) toast(`bienvenido/a, ${state.user.username}`);
+    } catch (err) {
+      showFormError(form, register ? err.message : `Login incorrect · ${err.message}`);
+      el.password.value = "";
+      el.password.focus();
+    } finally {
+      submit.disabled = false;
+    }
+  });
+}
+
+/** Olvida todo lo del usuario anterior al cerrar sesión. */
+function resetState() {
+  Object.assign(state, {
+    user: null, games: [], overview: null, calendar: null,
+    history: { game_id: "", result: "", date_from: "", date_to: "", order: "desc" },
+    roulette: { onlyPending: true, rotation: 0, spinning: false, autoSpin: false, log: [], result: null },
+  });
+  $("#status-right").textContent = "";
+}
+
+async function logout() {
+  try { await api("/api/auth/logout", { method: "POST" }); } catch { /* da igual: se cierra igual */ }
+  resetState();
+  history.replaceState(null, "", "#/dashboard");
+  showLogin();
+}
 
 window.addEventListener("hashchange", () => {
   router();
@@ -1130,13 +1231,20 @@ async function renderSettings() {
           </div>`)}
       </div>
       <div class="stack">
-        ${pane("usuario", `
-          <label class="field">nombre en el prompt
-            <input id="user-input" maxlength="20" value="${esc(userName())}" autocomplete="off" spellcheck="false">
-          </label>`)}
+        ${pane("sesión", `
+          ${kv([["whoami", `<b>${esc(userName())}</b>`], ["zona horaria", esc(TIMEZONE || "del servidor")]])}
+          <div class="card-actions" style="margin-top:10px"><button class="btn" data-logout>logout</button></div>`)}
         ${pane("datos", `
-          <p class="dim small">Los datos viven en SQLite (<code>data/dle_games.db</code>).</p>
+          <p class="dim small">Tus juegos y partidas se guardan en el servidor, separados de los de otras cuentas.</p>
           <button class="btn primary" id="export-btn">⬇ exportar json</button>`)}
+        ${pane("zona peligrosa", `
+          <form id="delete-account-form" novalidate>
+            <div class="form-error" role="alert" hidden></div>
+            <p class="dim small">Elimina tu cuenta y <b>todos</b> tus datos. No se puede deshacer.</p>
+            <label class="field">confirma con tu contraseña
+              <input name="password" type="password" autocomplete="current-password" maxlength="128"></label>
+            <button class="btn danger" type="submit">userdel -r ${esc(userName())}</button>
+          </form>`)}
         ${pane("atajos", kv([
           ["1-7", "navegar entre secciones"],
           ["r", "girar la ruleta"],
@@ -1154,11 +1262,22 @@ afterRender.settings = () => {
     if (e.target.value === "off") document.documentElement.dataset.crt = "off";
     else delete document.documentElement.dataset.crt;
   });
-  $("#user-input").addEventListener("change", (e) => {
-    const value = e.target.value.trim().replace(/\s+/g, "_");
-    writePref("dle-user", value || null);
-    toast(`usuario: ${userName()}`);
-    refresh();
+  const delForm = $("#delete-account-form");
+  delForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const password = delForm.elements.password.value;
+    if (!password) return showFormError(delForm, "Escribe tu contraseña.");
+    const ok = await confirmDialog(`userdel -r ${userName()}`, "Se eliminarán tu cuenta, tus juegos y todas tus partidas. No se puede deshacer.", "eliminar cuenta");
+    if (!ok) return;
+    try {
+      await api("/api/auth/me", { method: "DELETE", body: { password } });
+      resetState();
+      history.replaceState(null, "", "#/dashboard");
+      showLogin();
+      toast("cuenta eliminada");
+    } catch (err) {
+      showFormError(delForm, err.message);
+    }
   });
   $("#export-btn").addEventListener("click", async () => {
     try {
@@ -1459,6 +1578,8 @@ document.addEventListener("click", async (e) => {
     else if (d.editSession) await openSessionForm({ session: await api(`/api/sessions/${d.editSession}`) });
     else if (d.deleteSession) await deleteSession(d.deleteSession);
     else if ("spinLink" in d) state.roulette.autoSpin = true;
+    else if ("logout" in d) await logout();
+    else if (d.loginMode) showLogin(d.loginMode);
     else if ("fetchIcons" in d) {
       t.disabled = true;
       t.textContent = "buscando…";
@@ -1510,7 +1631,7 @@ document.addEventListener("click", async (e) => {
 /* Atajos de teclado: 1-7 navegan, r gira la ruleta, n registra partida. */
 document.addEventListener("keydown", (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
-  if (document.querySelector("dialog[open]")) return;
+  if (!state.user || document.querySelector("dialog[open]")) return;
   if (e.target.closest("input, select, textarea, [contenteditable]")) return;
   const n = Number(e.key);
   if (n >= 1 && n <= NAV_ORDER.length) {

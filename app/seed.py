@@ -1,14 +1,13 @@
-"""Juegos de ejemplo que se crean la primera vez que la base está vacía.
+"""Juegos de ejemplo que recibe cada cuenta nueva.
 
 Las URLs son las direcciones públicas conocidas de cada juego, pero no se
 pudieron comprobar desde el entorno donde se desarrolló la app (sin acceso a
 internet). Si alguna cambió, edítala desde la propia aplicación.
 """
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import Game
+from .models import Game, User
 
 SEED_GAMES = [
     {
@@ -65,9 +64,9 @@ SEED_GAMES = [
 ]
 
 
-def seed_if_empty(db: Session) -> bool:
-    if db.scalar(select(Game.id).limit(1)) is not None:
-        return False
-    db.add_all(Game(**data) for data in SEED_GAMES)
+def seed_for_user(db: Session, user: User) -> list[Game]:
+    """Juegos de ejemplo para una cuenta nueva."""
+    games = [Game(user_id=user.id, **data) for data in SEED_GAMES]
+    db.add_all(games)
     db.commit()
-    return True
+    return games

@@ -1,8 +1,9 @@
 """Modelos ORM.
 
-Dos tablas:
+Tablas:
 
-* ``games``: los juegos a trackear. Cada juego declara qué métricas usa
+* ``users`` y ``auth_tokens``: cuentas y sesiones iniciadas (cookie).
+* ``games``: los juegos de cada usuario: los juegos a trackear. Cada juego declara qué métricas usa
   (``track_*``) y cuál es su métrica principal, de modo que Wordle use
   intentos, Connections errores y un juego contrarreloj use tiempo, sin
   romper el esquema.
@@ -19,12 +20,13 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
     func,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, deferred, mapped_column, relationship
 
 from .database import Base
 
@@ -32,17 +34,47 @@ METRICS = ("attempts", "score", "time_seconds", "errors")
 RESULTS = ("win", "loss")
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str] = mapped_column(String(30), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+    games: Mapped[list["Game"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
+
+
+class AuthToken(Base):
+    """Sesión iniciada. Se guarda el hash del token, nunca el token."""
+
+    __tablename__ = "auth_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+    user: Mapped[User] = relationship()
+
+
 class Game(Base):
     __tablename__ = "games"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)
+    # Nullable solo por los juegos de la versión monousuario hasta que se reclaman.
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     category: Mapped[str] = mapped_column(String(50), default="", nullable=False)
     icon: Mapped[str] = mapped_column(String(16), default="🎮", nullable=False)
-    # Favicon descargado de la URL del juego (archivo en data/icons/); si no hay, se usa el emoji.
+    # Favicon descargado de la URL del juego; si no hay, se usa el emoji.
+    # icon_file es "<hash>.<ext>" (sirve para la caché); los bytes van en icon_data
+    # para que sobrevivan en hostings sin disco persistente.
     icon_file: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    icon_data: Mapped[bytes | None] = deferred(mapped_column(LargeBinary, nullable=True))
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Qué campos muestra el formulario de "Registrar resultado" para este juego.
@@ -59,8 +91,10 @@ class Game(Base):
     sessions: Mapped[list["GameSession"]] = relationship(
         back_populates="game", cascade="all, delete-orphan", passive_deletes=True
     )
+    user: Mapped[User | None] = relationship(back_populates="games")
 
     __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_games_user_name"),
         CheckConstraint(
             "primary_metric IN ('attempts','score','time_seconds','errors')",
             name="ck_games_primary_metric",

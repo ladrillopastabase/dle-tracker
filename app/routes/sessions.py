@@ -5,8 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..auth import current_user, user_today
 from ..database import get_db
-from ..models import GameSession
+from ..models import Game, GameSession, User
 from ..schemas import Result, SessionCreate, SessionOut, SessionUpdate
 from .games import get_game_or_404
 
@@ -16,11 +17,16 @@ router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 REQUIRED_FIELDS = {"game_id", "played_at", "result", "notes"}
 
 
-def get_session_or_404(db: Session, session_id: int) -> GameSession:
+def get_session_or_404(db: Session, session_id: int, user: User) -> GameSession:
     session = db.get(GameSession, session_id)
-    if session is None:
+    if session is None or session.game.user_id != user.id:
         raise HTTPException(status_code=404, detail="Partida no encontrada")
     return session
+
+
+def _check_not_future(played_at: date, today: date) -> None:
+    if played_at > today:
+        raise HTTPException(status_code=422, detail="La fecha no puede estar en el futuro")
 
 
 def _check_unique_day(db: Session, session: GameSession) -> None:
@@ -46,9 +52,10 @@ def list_sessions(
     date_to: date | None = None,
     order: Literal["asc", "desc"] = "desc",
     limit: int | None = None,
+    user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    query = select(GameSession)
+    query = select(GameSession).join(Game).where(Game.user_id == user.id)
     if game_id is not None:
         query = query.where(GameSession.game_id == game_id)
     if result is not None:
@@ -67,8 +74,10 @@ def list_sessions(
 
 
 @router.post("", response_model=SessionOut, status_code=201)
-def create_session(payload: SessionCreate, db: Session = Depends(get_db)):
-    get_game_or_404(db, payload.game_id)
+def create_session(payload: SessionCreate, user: User = Depends(current_user),
+                   today: date = Depends(user_today), db: Session = Depends(get_db)):
+    get_game_or_404(db, payload.game_id, user)
+    _check_not_future(payload.played_at, today)
     session = GameSession(**payload.model_dump())
     _check_unique_day(db, session)
     db.add(session)
@@ -78,16 +87,19 @@ def create_session(payload: SessionCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/{session_id}", response_model=SessionOut)
-def get_session(session_id: int, db: Session = Depends(get_db)):
-    return get_session_or_404(db, session_id)
+def get_session(session_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    return get_session_or_404(db, session_id, user)
 
 
 @router.put("/{session_id}", response_model=SessionOut)
-def update_session(session_id: int, payload: SessionUpdate, db: Session = Depends(get_db)):
-    session = get_session_or_404(db, session_id)
+def update_session(session_id: int, payload: SessionUpdate, user: User = Depends(current_user),
+                   today: date = Depends(user_today), db: Session = Depends(get_db)):
+    session = get_session_or_404(db, session_id, user)
     changes = payload.model_dump(exclude_unset=True)
     if changes.get("game_id") is not None:
-        get_game_or_404(db, changes["game_id"])
+        get_game_or_404(db, changes["game_id"], user)
+    if changes.get("played_at") is not None:
+        _check_not_future(changes["played_at"], today)
     for field, value in changes.items():
         if value is None and field in REQUIRED_FIELDS:
             continue
@@ -99,7 +111,7 @@ def update_session(session_id: int, payload: SessionUpdate, db: Session = Depend
 
 
 @router.delete("/{session_id}", status_code=204)
-def delete_session(session_id: int, db: Session = Depends(get_db)):
-    db.delete(get_session_or_404(db, session_id))
+def delete_session(session_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    db.delete(get_session_or_404(db, session_id, user))
     db.commit()
     return Response(status_code=204)
