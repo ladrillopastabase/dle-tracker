@@ -41,6 +41,8 @@ class Game(Base):
     url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     category: Mapped[str] = mapped_column(String(50), default="", nullable=False)
     icon: Mapped[str] = mapped_column(String(16), default="🎮", nullable=False)
+    # Favicon descargado de la URL del juego (archivo en data/icons/); si no hay, se usa el emoji.
+    icon_file: Mapped[str | None] = mapped_column(String(120), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Qué campos muestra el formulario de "Registrar resultado" para este juego.

@@ -383,6 +383,14 @@ td.notes-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; whi
 .list li:last-child { border-bottom: 0; }
 .list .grow { flex: 1; min-width: 160px; }
 .game-icon { font-size: 1.2rem; line-height: 1; }
+/* Favicons de los juegos (o su emoji de respaldo). */
+.gicon { width: 1.15em; height: 1.15em; object-fit: contain; vertical-align: -0.2em; image-rendering: auto; }
+.gicon-emoji { display: inline-block; width: 1.15em; text-align: center; }
+.gicon.sm, .gicon-emoji.sm { width: 0.95em; height: 0.95em; font-size: 0.95em; }
+.gicon.lg, .gicon-emoji.lg { width: 1.5em; height: 1.5em; font-size: 1.25rem; flex-shrink: 0; }
+.gicon.xl { width: 1.4em; height: 1.4em; }
+.icon-status { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: -6px; }
+.icon-status .gicon { width: 32px; height: 32px; }
 .manage-row.inactive { opacity: 0.55; }
 .ls-perm { color: var(--muted); font-size: 0.8rem; }
 

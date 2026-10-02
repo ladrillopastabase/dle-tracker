@@ -70,13 +70,14 @@
         <label class="field grow">nombre
           <input name="name" required maxlength="80" placeholder="Wordle" autocomplete="off">
         </label>
-        <label class="field icon-field">icono
-          <input name="icon" maxlength="16" placeholder="🟩">
+        <label class="field icon-field">emoji
+          <input name="icon" maxlength="16" placeholder="🟩" title="Se usa si no hay icono descargado">
         </label>
       </div>
       <label class="field">url
         <input name="url" type="url" maxlength="500" placeholder="https://…">
       </label>
+      <div class="field icon-status" id="icon-status"></div>
       <div class="row-2">
         <label class="field grow">categoría
           <input name="category" maxlength="50" placeholder="Palabras" list="category-list" autocomplete="off">

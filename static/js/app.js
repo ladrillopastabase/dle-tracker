@@ -120,6 +120,26 @@ function asciiBar(value, max, width = 16) {
   return `<span class="bar" aria-hidden="true">${"█".repeat(filled)}<span class="rest">${"░".repeat(width - filled)}</span></span>`;
 }
 
+/** Icono del juego: el favicon descargado o, si no hay, su emoji. */
+function gicon(game, cls = "") {
+  if (!game) return "";
+  if (game.icon_url) {
+    return `<img class="gicon ${cls}" src="${esc(game.icon_url)}" alt="" data-emoji="${esc(game.icon)}" loading="lazy" decoding="async">`;
+  }
+  return `<span class="gicon-emoji ${cls}" aria-hidden="true">${esc(game.icon)}</span>`;
+}
+
+// Si un favicon no carga (archivo borrado, etc.), se muestra el emoji.
+document.addEventListener("error", (e) => {
+  const img = e.target;
+  if (img instanceof HTMLImageElement && img.classList.contains("gicon")) {
+    const span = document.createElement("span");
+    span.className = img.className.replace("gicon", "gicon-emoji");
+    span.textContent = img.dataset.emoji || "🎮";
+    img.replaceWith(span);
+  }
+}, true);
+
 function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
@@ -466,7 +486,7 @@ function gameCard(game, card) {
       ${game.url ? `<a class="btn" href="${esc(game.url)}" target="_blank" rel="noopener noreferrer">▶ jugar</a>` : ""}
       <button class="btn primary" data-log="${game.id}">${card?.played_today ? "editar" : "+ registrar"}</button>
     </div>`;
-  const title = `${esc(game.icon)} <a href="#/game/${game.id}">${esc(slug(game.name))}</a>`;
+  const title = `${gicon(game)} <a href="#/game/${game.id}">${esc(slug(game.name))}</a>`;
   return pane(title, body, { cls: `game-card ${card?.played_today ? "done" : ""}`, tag: "article" });
 }
 
@@ -566,7 +586,7 @@ async function renderGames() {
     return `
       <li class="manage-row ${g.active ? "" : "inactive"}">
         <span class="ls-perm">${g.active ? "-rwxr-xr-x" : "-r--r--r--"}</span>
-        <span class="game-icon" aria-hidden="true">${esc(g.icon)}</span>
+        ${gicon(g, "lg")}
         <div class="grow">
           <a href="#/game/${g.id}"><b>${esc(g.name)}</b></a>
           ${g.category ? `<span class="tag cat">#${esc(slug(g.category))}</span>` : ""}
@@ -586,7 +606,7 @@ async function renderGames() {
       cmd: "ls -la juegos/",
       title: "juegos",
       sub: `total ${state.games.length}`,
-      actions: '<button class="btn primary" data-new-game>+ nuevo juego</button>',
+      actions: `${state.games.some((g) => g.url && !g.icon_url) ? '<button class="btn" data-fetch-icons>↻ iconos faltantes</button>' : ""}<button class="btn primary" data-new-game>+ nuevo juego</button>`,
     })}
     ${pane("juegos/", rows.length ? `<ul class="list">${rows.join("")}</ul>` : '<p class="empty">aún no tienes juegos</p>')}`;
 }
@@ -631,7 +651,7 @@ async function renderGame(id) {
   return `
     ${pageHead({
       cmd: `cat juegos/${slug(game.name)}`,
-      title: `${esc(game.icon)} ${esc(game.name)} ${game.active ? "" : '<span class="tag pending small">[inactivo]</span>'}`,
+      title: `${gicon(game, "xl")} ${esc(game.name)} ${game.active ? "" : '<span class="tag pending small">[inactivo]</span>'}`,
       sub: esc(game.description || game.category || ""),
       actions: `
         ${game.url ? `<a class="btn" href="${esc(game.url)}" target="_blank" rel="noopener noreferrer">▶ jugar</a>` : ""}
@@ -688,7 +708,12 @@ function wheelSvg(games) {
       shape = `<path class="${cls}" data-seg="${i}" d="M0 0 L${x1.toFixed(2)} ${y1.toFixed(2)} A${R} ${R} 0 ${per > 180 ? 1 : 0} 1 ${x2.toFixed(2)} ${y2.toFixed(2)} Z"/>`;
     }
     const name = g.name.length > 12 ? `${g.name.slice(0, 11)}…` : g.name;
-    const label = `<text data-seg-label="${i}" transform="rotate(${i * per - 90}) translate(${R * 0.58} 0)" text-anchor="middle">${esc(g.icon)} ${esc(name)}</text>`;
+    // El icono va hacia el borde de la rueda y el nombre más al centro.
+    const rot = `rotate(${i * per - 90})`;
+    const icon = g.icon_url
+      ? `<image href="${esc(g.icon_url)}" x="-12" y="-12" width="24" height="24" transform="${rot} translate(${R * 0.83} 0) rotate(90)" preserveAspectRatio="xMidYMid meet"/>`
+      : `<text transform="${rot} translate(${R * 0.83} 0) rotate(90)" text-anchor="middle">${esc(g.icon)}</text>`;
+    const label = `${icon}<text data-seg-label="${i}" transform="${rot} translate(${R * 0.52} 0)" text-anchor="middle">${esc(name)}</text>`;
     return shape + label;
   }).join("");
   return `<svg class="wheel" id="wheel" viewBox="-200 -200 400 400" role="img" aria-label="Ruleta con ${n} juegos"
@@ -716,7 +741,7 @@ async function renderRoulette() {
     : '<p class="empty">no hay juegos para girar</p>';
 
   const resultHtml = res
-    ? `<div class="result-name">${esc(res.icon)} ${esc(res.name)}</div>
+    ? `<div class="result-name">${gicon(res, "xl")} ${esc(res.name)}</div>
        <p class="dim small">${esc(res.description || "")}</p>
        <div class="card-actions">
          ${res.url ? `<a class="btn primary" href="${esc(res.url)}" target="_blank" rel="noopener noreferrer">▶ jugar ahora</a>` : ""}
@@ -826,7 +851,7 @@ async function renderHistory() {
     return `
       <tr>
         <td class="num nowrap" data-label="">${fmtDate(s.played_at)}</td>
-        <td class="nowrap" data-label="">${g ? `<a href="#/game/${g.id}">${esc(g.icon)} ${esc(g.name)}</a>` : "—"}</td>
+        <td class="nowrap" data-label="">${g ? `<a href="#/game/${g.id}">${gicon(g)} ${esc(g.name)}</a>` : "—"}</td>
         <td class="nowrap" data-label="">${resultTag(s.result)}</td>
         ${cell("puntaje", fmtNum(s.score))}
         ${cell("intentos", fmtNum(s.attempts))}
@@ -905,7 +930,7 @@ async function renderStats() {
     const trendCls = { improving: "delta-good", worsening: "delta-bad" }[s.trend.direction] || "";
     return `
       <tr>
-        <td class="nowrap"><a href="#/game/${g.id}">${esc(g.icon)} ${esc(g.name)}</a></td>
+        <td class="nowrap"><a href="#/game/${g.id}">${gicon(g)} ${esc(g.name)}</a></td>
         <td class="num">${s.played}</td>
         <td class="num c-win">${s.wins}</td>
         <td class="num c-loss">${s.losses}</td>
@@ -1022,7 +1047,7 @@ async function renderCalendar() {
       iso === selected ? "selected" : "",
       iso > state.today ? "future" : "",
     ].join(" ");
-    const shown = list.slice(0, 4).map((s) => esc(gameById(s.game_id)?.icon || "•")).join("");
+    const shown = list.slice(0, 4).map((s) => gicon(gameById(s.game_id), "sm")).join("");
     const icons = list.length > 4 ? `${shown}<span class="more">+${list.length - 4}</span>` : shown;
     const label = `${d} de ${MONTHS[month - 1]}: ${list.length ? `${list.length} partida(s)` : "sin partidas"}`;
     cells.push(`<button class="${cls}" data-day="${iso}" aria-label="${label}" ${iso > state.today ? "disabled" : ""}><span class="d">${String(d).padStart(2, " ")}</span><span class="icons" aria-hidden="true">${icons}</span>${list.length ? `<span class="cnt" aria-hidden="true">${list.length}</span>` : ""}</button>`);
@@ -1033,7 +1058,7 @@ async function renderCalendar() {
     const g = gameById(s.game_id);
     return `
       <li>
-        <span class="game-icon" aria-hidden="true">${esc(g?.icon)}</span>
+        ${gicon(g, "lg")}
         <div class="grow"><b>${esc(g?.name)}</b><div class="muted small">${g ? esc(sessionSummary(g, s)) : ""}${s.notes ? ` # ${esc(s.notes)}` : ""}</div></div>
         ${resultTag(s.result, { label: false })}
         <button class="btn" data-edit-session="${s.id}">editar</button>
@@ -1176,10 +1201,47 @@ function openGameForm(game = null) {
     gameForm.elements[key].checked = !!g[key];
   }
   $("#active-field").hidden = !game;
+  renderIconStatus(game);
   updatePrimaryOptions(g.primary_metric);
   $("#game-dialog").showModal();
   gameForm.elements.name.focus();
 }
+
+/** Estado del favicon dentro del formulario de juego. */
+function renderIconStatus(game) {
+  const box = $("#icon-status");
+  if (!game) {
+    box.innerHTML = '<span class="muted">el icono se descargará automáticamente desde la url</span>';
+    return;
+  }
+  box.innerHTML = game.icon_url
+    ? `${gicon(game, "xl")} <span class="dim">descargado de la url</span>
+       <button type="button" class="btn" data-icon-refresh="${game.id}">↻ actualizar</button>
+       <button type="button" class="btn danger" data-icon-remove="${game.id}">quitar</button>`
+    : `<span class="muted">sin icono descargado: se usa el emoji</span>
+       ${game.url ? `<button type="button" class="btn" data-icon-refresh="${game.id}">↻ obtener de la url</button>` : ""}`;
+}
+
+async function iconAction(id, method) {
+  const box = $("#icon-status");
+  if (method === "POST") box.innerHTML = '<span class="dim">buscando el mejor icono<span class="cursor"></span></span>';
+  try {
+    const game = await api(`/api/games/${id}/icon`, { method });
+    state.games = state.games.map((g) => (g.id === game.id ? game : g));
+    renderIconStatus(game);
+    toast(method === "POST" ? "icono actualizado" : "icono quitado");
+    refresh();
+  } catch (err) {
+    renderIconStatus(gameById(id));
+    toast(err.message, "error");
+  }
+}
+
+gameForm.addEventListener("click", (e) => {
+  const t = e.target.closest("button");
+  if (t?.dataset.iconRefresh) iconAction(Number(t.dataset.iconRefresh), "POST");
+  else if (t?.dataset.iconRemove) iconAction(Number(t.dataset.iconRemove), "DELETE");
+});
 
 gameForm.addEventListener("change", (e) => {
   if (e.target.name?.startsWith("track_")) updatePrimaryOptions();
@@ -1213,13 +1275,21 @@ gameForm.addEventListener("submit", async (e) => {
   };
   const id = gameForm.dataset.id;
   if (id) payload.active = el.active.checked;
+  const submit = gameForm.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  const urlChanged = payload.url && payload.url !== (gameById(id)?.url ?? null);
+  if (urlChanged) submit.textContent = "buscando icono…";
   try {
-    await api(id ? `/api/games/${id}` : "/api/games", { method: id ? "PUT" : "POST", body: payload });
+    const game = await api(id ? `/api/games/${id}` : "/api/games", { method: id ? "PUT" : "POST", body: payload });
     $("#game-dialog").close();
     toast(id ? "juego actualizado" : `${name} agregado`);
+    if (urlChanged && !game.icon_url) toast("no se encontró icono en la url: se usará el emoji", "error");
     refresh();
   } catch (err) {
     showFormError(gameForm, err.message);
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "guardar";
   }
 });
 
@@ -1389,6 +1459,13 @@ document.addEventListener("click", async (e) => {
     else if (d.editSession) await openSessionForm({ session: await api(`/api/sessions/${d.editSession}`) });
     else if (d.deleteSession) await deleteSession(d.deleteSession);
     else if ("spinLink" in d) state.roulette.autoSpin = true;
+    else if ("fetchIcons" in d) {
+      t.disabled = true;
+      t.textContent = "buscando…";
+      const r = await api("/api/games/icons/fetch-missing", { method: "POST" });
+      toast(`iconos: ${r.updated.length} descargado(s)${r.failed.length ? `, sin icono: ${r.failed.join(", ")}` : ""}`, r.failed.length && !r.updated.length ? "error" : "info");
+      refresh();
+    }
     else if (d.toggleGame) {
       const g = gameById(d.toggleGame);
       await api(`/api/games/${g.id}`, { method: "PUT", body: { active: !g.active } });

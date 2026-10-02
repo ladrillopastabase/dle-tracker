@@ -5,7 +5,7 @@ from datetime import date, datetime
 from typing import Literal
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 Metric = Literal["attempts", "score", "time_seconds", "errors"]
 Result = Literal["win", "loss"]
@@ -115,6 +115,13 @@ class GameOut(BaseModel):
     primary_metric: Metric
     lower_is_better: bool
     created_at: datetime
+    icon_file: str | None = Field(default=None, exclude=True)
+
+    @computed_field
+    @property
+    def icon_url(self) -> str | None:
+        """URL del favicon local; el nombre del archivo cambia con cada descarga (sirve de caché)."""
+        return f"/api/games/{self.id}/icon?v={self.icon_file}" if self.icon_file else None
 
 
 # -------------------------------------------------------------- partidas

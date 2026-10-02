@@ -12,6 +12,8 @@ rachas, estadísticas y evolución. La interfaz imita una consola Unix
 - **Ruleta**: si no sabes qué jugar, gírala y elige un juego al azar
   (solo los pendientes de hoy, o todos los activos).
 - **Mis juegos**: agregar, editar, desactivar o eliminar (con confirmación).
+  Al agregar un juego (o cambiar su URL) se descarga automáticamente el
+  **icono de mejor calidad** de su página; si no hay, se usa el emoji.
 - **Página de cada juego**: rachas, promedios, mejor/peor resultado, gráfico de
   evolución con media móvil, tendencia (mejorando/empeorando), distribución e
   historial reciente.
@@ -152,6 +154,10 @@ valores no negativos, además de la validación Pydantic.
 | GET | `/api/games?include_inactive=true` | Lista de juegos |
 | POST | `/api/games` | Crear juego |
 | GET | `/api/games/{id}` | Detalle |
+| GET | `/api/games/{id}/icon` | Favicon descargado del juego |
+| POST | `/api/games/{id}/icon` | Volver a descargar el icono desde la URL |
+| DELETE | `/api/games/{id}/icon` | Quitar el icono (vuelve al emoji) |
+| POST | `/api/games/icons/fetch-missing` | Descargar iconos de los juegos que no tienen |
 | PUT | `/api/games/{id}` | Actualizar (admite cambios parciales, p. ej. `{"active": false}`) |
 | DELETE | `/api/games/{id}` | Eliminar juego y sus partidas |
 | GET | `/api/sessions?game_id=&result=&date_from=&date_to=&order=desc&limit=` | Historial filtrado |
@@ -202,5 +208,12 @@ El formulario de **Registrar resultado** muestra solo esas métricas.
   partidas con las 10 anteriores (margen del 2 % para "estable").
 - **Desactivar vs. eliminar**: desactivar oculta el juego del dashboard y
   conserva sus estadísticas; eliminar borra el juego y sus partidas tras confirmar.
-- No hay migraciones (Alembic): las tablas se crean al arrancar. Si el esquema
-  cambia en el futuro, convendría añadirlas.
+- **Iconos**: el servidor lee el HTML de la URL del juego y reúne los
+  candidatos (`<link rel="icon">`, `apple-touch-icon`, iconos del web manifest
+  y `/favicon.ico`). Prefiere SVG y luego el tamaño mayor, comprueba por sus
+  bytes que el archivo sea realmente una imagen y lo guarda en `data/icons/`
+  (funciona sin conexión después). Los SVG se sirven con una CSP *sandbox*.
+  Para desactivar la descarga automática: `DLE_DISABLE_ICON_FETCH=1`.
+- No hay Alembic: al arrancar se crean las tablas y `ensure_schema` agrega las
+  columnas nuevas a bases de datos existentes (p. ej. `games.icon_file`), así
+  que actualizar no borra tus datos.

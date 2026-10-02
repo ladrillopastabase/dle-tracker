@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -32,8 +32,28 @@ def make_engine(db_path: str | Path):
     return engine
 
 
-engine = make_engine(os.environ.get("DLE_DB_PATH", DEFAULT_DB_PATH))
+DB_PATH = Path(os.environ.get("DLE_DB_PATH", DEFAULT_DB_PATH))
+# Los iconos descargados viven junto a la base de datos.
+ICONS_DIR = DB_PATH.parent / "icons"
+
+engine = make_engine(DB_PATH)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+
+# Columnas añadidas después de la primera versión: (tabla, columna, DDL).
+_ADDED_COLUMNS = [
+    ("games", "icon_file", "VARCHAR(120)"),
+]
+
+
+def ensure_schema(engine) -> None:
+    """Crea las tablas y agrega columnas nuevas a bases de datos existentes."""
+    Base.metadata.create_all(engine)
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for table, column, ddl in _ADDED_COLUMNS:
+            if column not in {c["name"] for c in inspector.get_columns(table)}:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
 
 
 def get_db():

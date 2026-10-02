@@ -8,7 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .database import BASE_DIR, Base, SessionLocal, engine
+from .database import BASE_DIR, SessionLocal, engine, ensure_schema
 from .routes import games, sessions, stats
 from .seed import seed_if_empty
 
@@ -55,7 +55,7 @@ def _friendly(error: dict) -> str:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    Base.metadata.create_all(engine)
+    ensure_schema(engine)
     if os.environ.get("DLE_SKIP_SEED") != "1":
         with SessionLocal() as db:
             seed_if_empty(db)
