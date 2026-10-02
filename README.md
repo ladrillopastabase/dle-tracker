@@ -2,11 +2,15 @@
 
 Dashboard personal para registrar y seguir los juegos diarios tipo Wordle
 (*-dle games*): qué jugaste hoy, qué tienes pendiente, tus resultados,
-rachas, estadísticas y evolución.
+rachas, estadísticas y evolución. La interfaz imita una consola Unix
+(prompts, paneles tipo TUI, barra de estado al estilo tmux) y la acompaña
+**Bit**, una mascota de píxeles que te avisa cómo va tu día.
 
 - **Dashboard**: resumen (juegos, jugados hoy, partidas, victorias, derrotas,
   % de victorias, racha actual y mejor racha), tarjetas por juego con botones
   **Jugar** y **Registrar**, resumen semanal comparado con la semana anterior y logros.
+- **Ruleta**: si no sabes qué jugar, gírala y elige un juego al azar
+  (solo los pendientes de hoy, o todos los activos).
 - **Mis juegos**: agregar, editar, desactivar o eliminar (con confirmación).
 - **Página de cada juego**: rachas, promedios, mejor/peor resultado, gráfico de
   evolución con media móvil, tendencia (mejorando/empeorando), distribución e
@@ -16,8 +20,12 @@ rachas, estadísticas y evolución.
 - **Estadísticas**: partidas por día, victorias/derrotas, evolución por juego y
   tabla comparativa.
 - **Calendario**: días jugados del mes; al elegir un día se ven sus partidas.
-- **Configuración**: tema claro / oscuro / sistema y exportación de datos a JSON.
-- Responsive: en móvil la barra lateral pasa a una barra de navegación inferior.
+- **Configuración**: temas *phosphor* (verde), *amber* y *paper* (claro), o
+  según el sistema; efecto de scanlines; nombre de usuario del prompt;
+  exportación de datos a JSON.
+- **Atajos de teclado**: `1`–`7` navegan entre secciones, `r` gira la ruleta,
+  `n` registra una partida, `Esc` cierra ventanas.
+- Responsive: en móvil la navegación pasa a la barra de estado inferior.
 
 ## Tecnologías
 
@@ -27,6 +35,7 @@ rachas, estadísticas y evolución.
 | Persistencia | SQLite mediante SQLAlchemy 2 |
 | Frontend | HTML + CSS + JavaScript vanilla (sin build, sin Node) |
 | Gráficos | Chart.js 4 (incluido en `static/vendor/`, funciona sin internet) |
+| Tipografía | JetBrains Mono (incluida en `static/vendor/fonts/`, licencia OFL) |
 | Tests | pytest + TestClient de FastAPI |
 
 ## Instalación y ejecución
@@ -94,8 +103,9 @@ app/
     └── stats.py       # Estadísticas, semana, logros, sugerencias
 static/
 ├── css/styles.css
-├── js/app.js          # SPA con rutas por hash (#/dashboard, #/game/1, …)
-└── vendor/chart.umd.min.js
+├── js/app.js          # SPA con rutas por hash (#/dashboard, #/roulette, #/game/1, …)
+├── js/mascot.js       # Bit, la mascota en pixel art (SVG)
+└── vendor/            # Chart.js y la fuente JetBrains Mono
 templates/index.html
 tests/
 data/                  # dle_games.db (ignorado por git)

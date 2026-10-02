@@ -3,77 +3,108 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DLE Games Tracker</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
+  <title>dle@tracker</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%230b0f0b'/><text x='2' y='12' font-family='monospace' font-size='11' fill='%234af626'>&gt;_</text></svg>">
   <script>
-    // Aplica el tema antes de pintar para evitar parpadeo.
+    // Aplica tema y efectos antes de pintar para evitar parpadeo.
     try {
       const t = localStorage.getItem("dle-theme");
-      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+      if (t) document.documentElement.dataset.theme = t;
+      if (localStorage.getItem("dle-crt") === "off") document.documentElement.dataset.crt = "off";
     } catch (e) {}
   </script>
   <link rel="stylesheet" href="/static/css/styles.css">
 </head>
 <body>
-  <div class="layout">
-    <nav class="sidebar" aria-label="Navegación principal">
-      <a class="brand" href="#/dashboard"><span aria-hidden="true">🎮</span> DLE Games</a>
-      <a class="nav-link" href="#/dashboard" data-route="dashboard"><span class="nav-ico" aria-hidden="true">🏠</span><span>Dashboard</span></a>
-      <a class="nav-link" href="#/games" data-route="games"><span class="nav-ico" aria-hidden="true">🕹️</span><span><span class="nav-full">Mis juegos</span><span class="nav-short">Juegos</span></span></a>
-      <a class="nav-link" href="#/history" data-route="history"><span class="nav-ico" aria-hidden="true">📜</span><span>Historial</span></a>
-      <a class="nav-link" href="#/stats" data-route="stats"><span class="nav-ico" aria-hidden="true">📊</span><span><span class="nav-full">Estadísticas</span><span class="nav-short">Stats</span></span></a>
-      <a class="nav-link" href="#/calendar" data-route="calendar"><span class="nav-ico" aria-hidden="true">📅</span><span>Calendario</span></a>
-      <a class="nav-link nav-settings" href="#/settings" data-route="settings"><span class="nav-ico" aria-hidden="true">⚙️</span><span><span class="nav-full">Configuración</span><span class="nav-short">Ajustes</span></span></a>
-    </nav>
+  <div class="screen">
+    <header class="titlebar">
+      <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span class="titlebar-text" id="titlebar-text">player@dle: ~</span>
+      <span class="titlebar-right" id="clock" aria-hidden="true"></span>
+    </header>
 
-    <main id="view" class="content" tabindex="-1" aria-live="polite"></main>
+    <div class="layout">
+      <nav class="sidebar" aria-label="Navegación principal">
+        <a class="brand" href="#/dashboard">
+          <span class="brand-mascot" data-mascot="idle" data-scale="3" aria-hidden="true"></span>
+          <span>dle<span class="accent">_</span>tracker</span>
+        </a>
+        <div class="nav-group muted small">~/</div>
+        <a class="nav-link" href="#/dashboard" data-route="dashboard"><kbd>1</kbd><span>dashboard</span></a>
+        <a class="nav-link" href="#/games" data-route="games"><kbd>2</kbd><span>juegos</span></a>
+        <a class="nav-link" href="#/roulette" data-route="roulette"><kbd>3</kbd><span>ruleta</span></a>
+        <a class="nav-link" href="#/history" data-route="history"><kbd>4</kbd><span>historial</span></a>
+        <a class="nav-link" href="#/stats" data-route="stats"><kbd>5</kbd><span>stats</span></a>
+        <a class="nav-link" href="#/calendar" data-route="calendar"><kbd>6</kbd><span>calendario</span></a>
+        <a class="nav-link nav-settings" href="#/settings" data-route="settings"><kbd>7</kbd><span>config</span></a>
+        <p class="nav-help muted small">[n] nueva partida<br>[r] girar ruleta</p>
+      </nav>
+
+      <main id="view" class="content" tabindex="-1" aria-live="polite"></main>
+    </div>
+
+    <footer class="statusbar" aria-label="Barra de estado">
+      <span class="sb-session">[dle]</span>
+      <nav class="sb-tabs" aria-label="Navegación">
+        <a href="#/dashboard" data-route="dashboard">0:inicio</a>
+        <a href="#/games" data-route="games">1:juegos</a>
+        <a href="#/roulette" data-route="roulette">2:ruleta</a>
+        <a href="#/history" data-route="history">3:hist</a>
+        <a href="#/stats" data-route="stats">4:stats</a>
+        <a href="#/calendar" data-route="calendar">5:cal</a>
+        <a href="#/settings" data-route="settings">6:cfg</a>
+      </nav>
+      <span class="sb-right" id="status-right"></span>
+    </footer>
   </div>
 
   <!-- Formulario de juego (crear / editar) -->
   <dialog id="game-dialog" class="modal">
     <form id="game-form" method="dialog" novalidate>
       <header class="modal-head">
-        <h2 id="game-form-title">Agregar juego</h2>
-        <button type="button" class="icon-btn" data-close aria-label="Cerrar">✕</button>
+        <h2 id="game-form-title">nuevo juego</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Cerrar">[x]</button>
       </header>
       <div class="form-error" role="alert" hidden></div>
       <div class="row-2">
-        <label class="field grow">Nombre
+        <label class="field grow">nombre
           <input name="name" required maxlength="80" placeholder="Wordle" autocomplete="off">
         </label>
-        <label class="field icon-field">Icono
+        <label class="field icon-field">icono
           <input name="icon" maxlength="16" placeholder="🟩">
         </label>
       </div>
-      <label class="field">URL
+      <label class="field">url
         <input name="url" type="url" maxlength="500" placeholder="https://…">
       </label>
-      <label class="field">Categoría
-        <input name="category" maxlength="50" placeholder="Palabras" list="category-list" autocomplete="off">
-        <datalist id="category-list"></datalist>
-      </label>
-      <label class="field">Descripción
+      <div class="row-2">
+        <label class="field grow">categoría
+          <input name="category" maxlength="50" placeholder="Palabras" list="category-list" autocomplete="off">
+          <datalist id="category-list"></datalist>
+        </label>
+      </div>
+      <label class="field">descripción
         <input name="description" maxlength="500" placeholder="Juego diario de palabras">
       </label>
       <fieldset class="field">
-        <legend>Métricas que registra</legend>
+        <legend>métricas</legend>
         <div class="chips">
-          <label class="check"><input type="checkbox" name="track_attempts"> Intentos</label>
-          <label class="check"><input type="checkbox" name="track_errors"> Errores</label>
-          <label class="check"><input type="checkbox" name="track_score"> Puntaje</label>
-          <label class="check"><input type="checkbox" name="track_time"> Tiempo</label>
+          <label class="check"><input type="checkbox" name="track_attempts"> intentos</label>
+          <label class="check"><input type="checkbox" name="track_errors"> errores</label>
+          <label class="check"><input type="checkbox" name="track_score"> puntaje</label>
+          <label class="check"><input type="checkbox" name="track_time"> tiempo</label>
         </div>
       </fieldset>
       <div class="row-2">
-        <label class="field grow">Métrica principal
+        <label class="field grow">métrica principal
           <select name="primary_metric"></select>
         </label>
-        <label class="check align-end"><input type="checkbox" name="lower_is_better"> Menor es mejor</label>
+        <label class="check align-end"><input type="checkbox" name="lower_is_better"> menor es mejor</label>
       </div>
-      <label class="check" id="active-field"><input type="checkbox" name="active"> Activo (aparece en el dashboard)</label>
+      <label class="check" id="active-field"><input type="checkbox" name="active"> activo (aparece en el dashboard)</label>
       <footer class="modal-foot">
-        <button type="button" class="btn ghost" data-close>Cancelar</button>
-        <button type="submit" class="btn primary">Guardar</button>
+        <button type="button" class="btn ghost" data-close>cancelar</button>
+        <button type="submit" class="btn primary">guardar</button>
       </footer>
     </form>
   </dialog>
@@ -82,33 +113,33 @@
   <dialog id="session-dialog" class="modal">
     <form id="session-form" method="dialog" novalidate>
       <header class="modal-head">
-        <h2 id="session-form-title">Registrar resultado</h2>
-        <button type="button" class="icon-btn" data-close aria-label="Cerrar">✕</button>
+        <h2 id="session-form-title">registrar</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Cerrar">[x]</button>
       </header>
       <div class="form-error" role="alert" hidden></div>
-      <label class="field" id="session-game-field">Juego
+      <label class="field" id="session-game-field">juego
         <select name="game_id"></select>
       </label>
-      <label class="field">Fecha
+      <label class="field">fecha
         <input name="played_at" type="date" required>
       </label>
       <div class="field">
-        <span class="field-label">Resultado</span>
+        <span class="field-label">resultado</span>
         <div class="segmented" role="radiogroup" aria-label="Resultado">
-          <label><input type="radio" name="result" value="win"><span>✅ Victoria</span></label>
-          <label><input type="radio" name="result" value="loss"><span>❌ Derrota</span></label>
+          <label><input type="radio" name="result" value="win"><span>[ OK ] victoria</span></label>
+          <label><input type="radio" name="result" value="loss"><span>[FAIL] derrota</span></label>
         </div>
       </div>
       <div id="metric-fields"></div>
       <details class="notes" id="notes-details">
-        <summary>Notas</summary>
-        <textarea name="notes" rows="2" maxlength="1000" placeholder="Opcional"></textarea>
+        <summary>notas</summary>
+        <textarea name="notes" rows="2" maxlength="1000" placeholder="opcional"></textarea>
       </details>
       <footer class="modal-foot">
-        <button type="button" class="btn danger ghost" id="session-delete" hidden>Eliminar</button>
+        <button type="button" class="btn danger" id="session-delete" hidden>rm</button>
         <span class="spacer"></span>
-        <button type="button" class="btn ghost" data-close>Cancelar</button>
-        <button type="submit" class="btn primary">Guardar</button>
+        <button type="button" class="btn ghost" data-close>cancelar</button>
+        <button type="submit" class="btn primary">guardar ⏎</button>
       </footer>
     </form>
   </dialog>
@@ -116,11 +147,11 @@
   <!-- Confirmación -->
   <dialog id="confirm-dialog" class="modal small">
     <form method="dialog">
-      <h2 id="confirm-title">¿Seguro?</h2>
+      <header class="modal-head"><h2 id="confirm-title">¿seguro?</h2></header>
       <p id="confirm-text"></p>
       <footer class="modal-foot">
-        <button value="cancel" class="btn ghost">Cancelar</button>
-        <button value="ok" class="btn danger">Eliminar</button>
+        <button value="cancel" class="btn ghost">cancelar</button>
+        <button value="ok" class="btn danger solid">eliminar</button>
       </footer>
     </form>
   </dialog>
@@ -128,6 +159,7 @@
   <div id="toasts" class="toasts" aria-live="assertive"></div>
 
   <script src="/static/vendor/chart.umd.min.js"></script>
+  <script src="/static/js/mascot.js"></script>
   <script src="/static/js/app.js"></script>
 </body>
 </html>

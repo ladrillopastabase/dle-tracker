@@ -6,22 +6,30 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 const METRICS = {
-  attempts: { label: "Intentos", flag: "track_attempts", quick: [1, 2, 3, 4, 5, 6] },
-  errors: { label: "Errores", flag: "track_errors", quick: [0, 1, 2, 3, 4] },
-  score: { label: "Puntaje", flag: "track_score" },
-  time_seconds: { label: "Tiempo", flag: "track_time" },
+  attempts: { label: "intentos", flag: "track_attempts", quick: [1, 2, 3, 4, 5, 6] },
+  errors: { label: "errores", flag: "track_errors", quick: [0, 1, 2, 3, 4] },
+  score: { label: "puntaje", flag: "track_score" },
+  time_seconds: { label: "tiempo", flag: "track_time" },
 };
-const RESULT_LABEL = { win: "Victoria", loss: "Derrota" };
+const RESULT_LABEL = { win: "victoria", loss: "derrota" };
 const MONTHS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
   "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+const ROUTE_PATH = {
+  dashboard: "~", games: "~/juegos", game: "~/juegos", roulette: "~/ruleta",
+  history: "~/historial", stats: "~/stats", calendar: "~/calendario", settings: "~/.config",
+};
+const NAV_ORDER = ["dashboard", "games", "roulette", "history", "stats", "calendar", "settings"];
+const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 const state = {
   games: [],
   overview: null,
   today: localISO(new Date()),
   charts: [],
+  route: "dashboard",
   history: { game_id: "", result: "", date_from: "", date_to: "", order: "desc" },
   calendar: null, // {year, month, selected}
+  roulette: { onlyPending: true, rotation: 0, spinning: false, autoSpin: false, log: [], result: null },
 };
 
 function localISO(d) {
@@ -48,8 +56,8 @@ function esc(value) {
 
 function fmtDate(iso, { relative = true } = {}) {
   if (!iso) return "—";
-  if (relative && iso === state.today) return "Hoy";
-  if (relative && iso === addDays(state.today, -1)) return "Ayer";
+  if (relative && iso === state.today) return "hoy";
+  if (relative && iso === addDays(state.today, -1)) return "ayer";
   const [y, m, d] = iso.split("-");
   return `${d}/${m}/${y}`;
 }
@@ -87,6 +95,10 @@ function gameById(id) {
   return state.games.find((g) => g.id === Number(id));
 }
 
+function slug(name) {
+  return String(name).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+}
+
 function trackedMetrics(game) {
   return Object.keys(METRICS).filter((m) => game[METRICS[m].flag]);
 }
@@ -94,16 +106,64 @@ function trackedMetrics(game) {
 function sessionSummary(game, s) {
   return trackedMetrics(game)
     .filter((m) => s[m] != null)
-    .map((m) => `${fmtMetric(m, s[m])} ${METRICS[m].label.toLowerCase()}`)
+    .map((m) => `${fmtMetric(m, s[m])} ${METRICS[m].label}`)
     .join(" · ");
 }
 
-function resultBadge(result) {
-  return `<span class="badge ${result}">${result === "win" ? "✓" : "✕"} ${RESULT_LABEL[result]}</span>`;
+function resultTag(result, { label = true } = {}) {
+  const tag = result === "win" ? "[ OK ]" : "[FAIL]";
+  return `<span class="tag ${result}">${tag}</span>${label ? ` ${RESULT_LABEL[result]}` : ""}`;
+}
+
+function asciiBar(value, max, width = 16) {
+  const filled = max ? Math.round((Math.min(value, max) / max) * width) : 0;
+  return `<span class="bar" aria-hidden="true">${"█".repeat(filled)}<span class="rest">${"░".repeat(width - filled)}</span></span>`;
 }
 
 function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function userName() {
+  try { return localStorage.getItem("dle-user") || "player"; } catch { return "player"; }
+}
+
+/* ================================================================ piezas de UI */
+
+/** Cabecera de página con línea de prompt: player@dle:~/ruta$ comando */
+function pageHead({ cmd, title, sub = "", actions = "" }) {
+  return `
+    <div class="page-head">
+      <div>
+        <div class="prompt"><span class="u">${esc(userName())}@dle</span>:<span class="p">${ROUTE_PATH[state.route]}</span>$ <span class="cmd">${esc(cmd)}</span><span class="cursor" aria-hidden="true"></span></div>
+        <h1>${title}</h1>
+        ${sub ? `<p>${sub}</p>` : ""}
+      </div>
+      ${actions ? `<div class="card-actions">${actions}</div>` : ""}
+    </div>`;
+}
+
+function pane(title, body, { aside = "", cls = "", tag = "section" } = {}) {
+  return `<${tag} class="pane ${cls}">${title ? `<span class="pane-title">${title}</span>` : ""}${aside ? `<span class="pane-aside">${aside}</span>` : ""}${body}</${tag}>`;
+}
+
+function kv(pairs) {
+  return `<dl class="kv">${pairs.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>`;
+}
+
+/** Escribe el texto letra a letra, como una terminal. */
+function typewrite(el) {
+  if (!el) return;
+  const text = el.dataset.text || "";
+  if (REDUCED_MOTION.matches) { el.textContent = text; return; }
+  el.textContent = "";
+  let i = 0;
+  const tick = () => {
+    if (!el.isConnected) return;
+    el.textContent = text.slice(0, ++i);
+    if (i < text.length) setTimeout(tick, 18);
+  };
+  tick();
 }
 
 /* ================================================================ API */
@@ -138,6 +198,7 @@ async function loadGames() {
 async function loadOverview() {
   state.overview = await api("/api/stats");
   state.today = state.overview.today;
+  updateStatusBar();
   return state.overview;
 }
 
@@ -151,7 +212,7 @@ function toast(message, type = "info") {
   setTimeout(() => el.remove(), type === "error" ? 5000 : 2500);
 }
 
-function confirmDialog(title, text, okLabel = "Eliminar") {
+function confirmDialog(title, text, okLabel = "eliminar") {
   const dialog = $("#confirm-dialog");
   $("#confirm-title").textContent = title;
   $("#confirm-text").textContent = text;
@@ -169,11 +230,21 @@ function showFormError(form, message) {
   box.hidden = !message;
 }
 
-// Cerrar modales con los botones [data-close].
 document.addEventListener("click", (e) => {
   const closer = e.target.closest("[data-close]");
   if (closer) closer.closest("dialog").close();
 });
+
+function updateStatusBar() {
+  const now = new Date();
+  const hhmm = now.toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" });
+  const o = state.overview;
+  $("#status-right").textContent = o
+    ? `racha ${o.current_streak}d | hoy ${o.played_today}/${o.total_games} | ${hhmm}`
+    : hhmm;
+  $("#clock").textContent = `${state.today} ${hhmm}`;
+}
+setInterval(updateStatusBar, 30000);
 
 /* ================================================================ gráficos */
 
@@ -185,21 +256,25 @@ function destroyCharts() {
 function chartTheme() {
   if (!window.Chart) return;
   Chart.defaults.font.family = cssVar("--font");
+  Chart.defaults.font.size = 11;
   Chart.defaults.color = cssVar("--text-2");
-  Chart.defaults.borderColor = cssVar("--grid");
-  Chart.defaults.plugins.tooltip.backgroundColor = cssVar("--text");
-  Chart.defaults.plugins.tooltip.titleColor = cssVar("--bg");
-  Chart.defaults.plugins.tooltip.bodyColor = cssVar("--bg");
-  Chart.defaults.plugins.tooltip.padding = 10;
-  Chart.defaults.plugins.tooltip.cornerRadius = 8;
+  Chart.defaults.borderColor = cssVar("--line");
+  const tip = Chart.defaults.plugins.tooltip;
+  tip.backgroundColor = cssVar("--bg");
+  tip.borderColor = cssVar("--accent");
+  tip.borderWidth = 1;
+  tip.titleColor = cssVar("--accent");
+  tip.bodyColor = cssVar("--text");
+  tip.padding = 8;
+  tip.cornerRadius = 0;
   Chart.defaults.plugins.legend.labels.usePointStyle = true;
-  Chart.defaults.plugins.legend.labels.boxHeight = 8;
+  Chart.defaults.plugins.legend.labels.boxHeight = 7;
   Chart.defaults.maintainAspectRatio = false;
 }
 
 function makeChart(canvas, config) {
   if (!window.Chart || !canvas) {
-    if (canvas) canvas.parentElement.innerHTML = '<p class="empty">Gráficos no disponibles.</p>';
+    if (canvas) canvas.parentElement.innerHTML = '<p class="empty">gráficos no disponibles</p>';
     return null;
   }
   chartTheme();
@@ -219,14 +294,13 @@ function movingAverage(values, n = 7) {
 function evolutionChart(canvas, stats) {
   const points = stats.timeline.filter((p) => p.value != null);
   if (!points.length) {
-    canvas.parentElement.innerHTML = '<p class="empty">Aún no hay datos de la métrica principal.</p>';
+    canvas.parentElement.innerHTML = '<p class="empty">aún no hay datos de la métrica principal</p>';
     return;
   }
   const metric = stats.primary_metric;
   const values = points.map((p) => p.value);
   const win = cssVar("--win");
   const loss = cssVar("--loss");
-  const accent = cssVar("--accent");
   makeChart(canvas, {
     type: "line",
     data: {
@@ -235,17 +309,19 @@ function evolutionChart(canvas, stats) {
         {
           label: METRICS[metric].label,
           data: values,
-          borderColor: accent,
+          borderColor: cssVar("--accent"),
           borderWidth: 2,
           pointRadius: 4,
           pointHoverRadius: 6,
+          pointStyle: "rect",
           pointBackgroundColor: points.map((p) => (p.result === "win" ? win : loss)),
           pointBorderColor: cssVar("--surface"),
           pointBorderWidth: 2,
+          stepped: false,
           cubicInterpolationMode: "monotone",
         },
         {
-          label: "Media móvil (7)",
+          label: "media móvil (7)",
           data: movingAverage(values),
           borderColor: cssVar("--muted"),
           borderDash: [4, 4],
@@ -259,7 +335,6 @@ function evolutionChart(canvas, stats) {
       interaction: { mode: "index", intersect: false },
       scales: {
         y: {
-          reverse: false,
           ticks: { callback: (v) => fmtMetric(metric, v), precision: 0 },
           title: { display: true, text: `${METRICS[metric].label} (${stats.lower_is_better ? "menor es mejor" : "mayor es mejor"})` },
         },
@@ -271,7 +346,7 @@ function evolutionChart(canvas, stats) {
             label: (ctx) => `${ctx.dataset.label}: ${fmtMetric(metric, ctx.parsed.y)}`,
             afterBody: (items) => {
               const p = points[items[0].dataIndex];
-              return p ? `Resultado: ${RESULT_LABEL[p.result]}` : "";
+              return p ? `resultado: ${RESULT_LABEL[p.result]}` : "";
             },
           },
         },
@@ -282,7 +357,7 @@ function evolutionChart(canvas, stats) {
 
 function distributionChart(canvas, stats) {
   if (!stats.distribution?.length) {
-    canvas.parentElement.innerHTML = '<p class="empty">Sin distribución para esta métrica.</p>';
+    canvas.parentElement.innerHTML = '<p class="empty">sin distribución para esta métrica</p>';
     return;
   }
   makeChart(canvas, {
@@ -290,11 +365,10 @@ function distributionChart(canvas, stats) {
     data: {
       labels: stats.distribution.map((d) => d.value),
       datasets: [{
-        label: "Partidas",
+        label: "partidas",
         data: stats.distribution.map((d) => d.count),
         backgroundColor: cssVar("--accent"),
-        borderRadius: 4,
-        maxBarThickness: 36,
+        maxBarThickness: 32,
       }],
     },
     options: {
@@ -313,39 +387,40 @@ const routes = {
   dashboard: renderDashboard,
   games: renderGames,
   game: renderGame,
+  roulette: renderRoulette,
   history: renderHistory,
   stats: renderStats,
   calendar: renderCalendar,
   settings: renderSettings,
 };
+const afterRender = {};
 
 async function router() {
-  const [name = "dashboard", param] = location.hash.replace(/^#\/?/, "").split("/");
-  const render = routes[name] || renderDashboard;
-  $$(".nav-link").forEach((a) => {
-    const active = a.dataset.route === name || (name === "game" && a.dataset.route === "games");
+  let [name = "dashboard", param] = location.hash.replace(/^#\/?/, "").split("/");
+  if (!routes[name]) name = "dashboard";
+  state.route = name;
+  const navName = name === "game" ? "games" : name;
+  $$("[data-route]").forEach((a) => {
+    const active = a.dataset.route === navName;
     a.classList.toggle("active", active);
     if (active) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
+  $("#titlebar-text").textContent = `${userName()}@dle: ${ROUTE_PATH[name]}`;
   destroyCharts();
   const view = $("#view");
   try {
     await loadGames();
-    const html = await render(param);
-    if (html !== undefined) {
-      view.innerHTML = `<div class="view">${html}</div>`;
-    }
+    const html = await routes[name](param);
+    view.innerHTML = `<div class="view">${html}</div>`;
+    Mascot.mountAll(view);
+    $$("[data-text]", view).forEach(typewrite);
     afterRender[name]?.(param);
   } catch (err) {
-    view.innerHTML = `<div class="view card empty">⚠️ ${esc(err.message)}</div>`;
+    view.innerHTML = `<div class="view">${pane("error", `<p class="c-loss">${esc(err.message)}</p>`)}</div>`;
   }
 }
 
-const afterRender = {};
-
-function refresh() {
-  router();
-}
+const refresh = () => router();
 
 window.addEventListener("hashchange", () => {
   router();
@@ -355,11 +430,47 @@ window.addEventListener("hashchange", () => {
 
 /* ================================================================ dashboard */
 
-function tile(label, value, extra = "") {
-  return `<div class="card tile ${extra}"><div class="label">${label}</div><div class="value num">${value}</div></div>`;
+/** Estado de ánimo y mensaje de Bit según cómo va el día. */
+function mascotState(o) {
+  const pending = o.pending_today.length;
+  if (!o.total_games) return { mood: "sleep", text: "No tengo juegos que vigilar... agrega uno y despierto." };
+  if (!pending) {
+    return { mood: "happy", text: `¡Todo jugado hoy! ${o.current_streak} día(s) de racha. Vuelve mañana.` };
+  }
+  if (o.current_streak > 0 && o.played_today === 0) {
+    return { mood: "sad", text: `Tu racha de ${o.current_streak} día(s) está en peligro. ¡Juega algo hoy!` };
+  }
+  if (o.played_today === 0) {
+    return { mood: "idle", text: `Hoy te esperan ${pending} juego(s). ¿No sabes por cuál empezar? Gira la ruleta [r].` };
+  }
+  return { mood: "idle", text: `Vas ${o.played_today}/${o.total_games}. Quedan ${pending}; si dudas, la ruleta elige por ti [r].` };
 }
 
-function weekCard(week, { title = "Esta semana", metricKey = "attempts", lowerBetter = true } = {}) {
+function gameCard(game, card) {
+  const last = card?.last_session;
+  const status = card?.played_today ? resultTag(last.result) : '<span class="tag pending">[PEND]</span> pendiente';
+  const rows = [["estado", status]];
+  if (last) {
+    rows.push(["última", fmtDate(last.played_at)]);
+    const summary = sessionSummary(game, last);
+    if (summary) rows.push(["datos", esc(summary)]);
+  } else {
+    rows.push(["última", '<span class="muted">sin partidas</span>']);
+  }
+  rows.push(["racha", card?.current_streak
+    ? `<span class="tag streak">${card.current_streak}d</span> ${asciiBar(Math.min(card.current_streak, 10), 10, 10)}`
+    : '<span class="muted">—</span>']);
+  const body = `
+    ${kv(rows)}
+    <div class="card-actions">
+      ${game.url ? `<a class="btn" href="${esc(game.url)}" target="_blank" rel="noopener noreferrer">▶ jugar</a>` : ""}
+      <button class="btn primary" data-log="${game.id}">${card?.played_today ? "editar" : "+ registrar"}</button>
+    </div>`;
+  const title = `${esc(game.icon)} <a href="#/game/${game.id}">${esc(slug(game.name))}</a>`;
+  return pane(title, body, { cls: `game-card ${card?.played_today ? "done" : ""}`, tag: "article" });
+}
+
+function weekPane(week, { title = "semana", metricKey = "attempts", lowerBetter = true } = {}) {
   const t = week.this_week;
   const l = week.last_week;
   const avgKey = `avg_${metricKey}`;
@@ -368,112 +479,80 @@ function weekCard(week, { title = "Esta semana", metricKey = "attempts", lowerBe
   if (delta != null) {
     const better = delta === 0 ? null : (delta < 0) === lowerBetter;
     const cls = better == null ? "" : better ? "delta-good" : "delta-bad";
-    const arrow = delta === 0 ? "=" : delta < 0 ? "▼" : "▲";
-    deltaHtml = `<span class="${cls}">${arrow} ${fmtMetric(metricKey, Math.abs(delta))}</span>`;
+    const sign = delta > 0 ? "+" : delta < 0 ? "-" : "±";
+    deltaHtml = `<span class="${cls}">${sign}${fmtMetric(metricKey, Math.abs(delta))} ${better == null ? "" : better ? "(mejor)" : "(peor)"}</span>`;
   }
-  return `
-    <div class="card">
-      <div class="section-head"><h2>📅 ${title}</h2><span class="muted small">${fmtDate(t.start, { relative: false })} – ${fmtDate(t.end, { relative: false })}</span></div>
-      <div class="week-grid">
-        <div><div class="muted small">Partidas</div><div class="value num">${t.played}</div></div>
-        <div><div class="muted small">Victorias</div><div class="value num">${t.wins}</div></div>
-        <div><div class="muted small">Derrotas</div><div class="value num">${t.losses}</div></div>
-        <div><div class="muted small">Días jugados</div><div class="value num">${t.days_played}/7</div></div>
-      </div>
-      <div class="week-grid">
-        <div><div class="muted small">Promedio ${METRICS[metricKey].label.toLowerCase()}</div><div class="value num">${fmtMetric(metricKey, t[avgKey])}</div></div>
-        <div><div class="muted small">Semana anterior</div><div class="value num">${fmtMetric(metricKey, l[avgKey])}</div></div>
-        <div><div class="muted small">Variación</div><div class="value num">${deltaHtml}</div></div>
-      </div>
-    </div>`;
+  const body = kv([
+    ["partidas", `${t.played} <span class="muted">(${t.wins} ok / ${t.losses} fail)</span>`],
+    ["días", `${t.days_played}/7 ${asciiBar(t.days_played, 7, 7)}`],
+    [`prom. ${METRICS[metricKey].label}`, fmtMetric(metricKey, t[avgKey])],
+    ["sem. anterior", fmtMetric(metricKey, l[avgKey])],
+    ["variación", deltaHtml],
+  ]);
+  return pane(title, body, { aside: `<span class="muted">${fmtDate(t.start, { relative: false })} → ${fmtDate(t.end, { relative: false })}</span>` });
 }
 
-function achievementsHtml(list) {
-  return `<div class="achievements">${list.map((a) => `
-    <div class="card achievement ${a.unlocked ? "" : "locked"}" title="${a.unlocked ? "Desbloqueado" : `Progreso ${a.progress}/${a.target}`}">
-      <span class="a-icon" aria-hidden="true">${a.icon}</span>
-      <div class="grow">
-        <div><b>${esc(a.title)}</b></div>
-        <div class="muted small">${a.unlocked ? "Desbloqueado" : `${a.progress} / ${a.target}`}</div>
-        ${a.unlocked ? "" : `<div class="bar"><span style="width:${(100 * a.progress) / a.target}%"></span></div>`}
-      </div>
-    </div>`).join("")}</div>`;
-}
-
-function gameCard(game, card) {
-  const last = card?.last_session;
-  const lines = [];
-  if (last) {
-    lines.push(`<div>Última partida: <b>${fmtDate(last.played_at)}</b></div>`);
-    lines.push(`<div>Resultado: <b>${RESULT_LABEL[last.result]}</b></div>`);
-    const summary = sessionSummary(game, last);
-    if (summary) lines.push(`<div>${esc(summary)}</div>`);
-  } else {
-    lines.push('<div class="muted">Sin partidas todavía</div>');
-  }
-  const status = card?.played_today
-    ? resultBadge(last.result)
-    : '<span class="badge pending">Pendiente</span>';
-  const streak = card?.current_streak
-    ? `<span class="badge streak">🔥 ${card.current_streak} ${card.current_streak === 1 ? "día" : "días"}</span>`
-    : '<span class="muted small">Sin racha activa</span>';
-  return `
-    <article class="card game-card ${card?.played_today ? "done" : ""}">
-      <div class="game-card-head">
-        <span class="game-icon" aria-hidden="true">${esc(game.icon)}</span>
-        <a class="game-title" href="#/game/${game.id}">${esc(game.name)}</a>
-        <span class="ml-auto">${status}</span>
-      </div>
-      <div class="game-meta">${lines.join("")}</div>
-      <div>${streak}</div>
-      <div class="card-actions">
-        ${game.url ? `<a class="btn" href="${esc(game.url)}" target="_blank" rel="noopener noreferrer">▶ Jugar</a>` : ""}
-        <button class="btn primary" data-log="${game.id}">${card?.played_today ? "✎ Editar hoy" : "＋ Registrar"}</button>
-      </div>
-    </article>`;
+function achievementsPane(list) {
+  const items = list.map((a) => `
+    <li class="${a.unlocked ? "" : "locked"}">
+      <span class="box">${a.unlocked ? "[x]" : "[ ]"}</span>
+      <span>${a.icon} ${esc(a.title)}</span>
+      ${a.unlocked ? "" : `<span>${asciiBar(a.progress, a.target, 12)} <span class="muted">${a.progress}/${a.target}</span></span>`}
+    </li>`).join("");
+  return pane("logros", `<ul class="achievements">${items}</ul>`);
 }
 
 async function renderDashboard() {
   const o = await loadOverview();
   const cards = Object.fromEntries(o.games.map((c) => [c.game_id, c]));
   const active = state.games.filter((g) => g.active);
-  // Pendientes primero, luego por nombre.
   active.sort((a, b) => (cards[a.id]?.played_today - cards[b.id]?.played_today) || a.name.localeCompare(b.name));
-  let dateLabel = parseISO(o.today).toLocaleDateString("es", { weekday: "long", day: "numeric", month: "long" });
-  dateLabel = dateLabel.charAt(0).toUpperCase() + dateLabel.slice(1);
+  const dateLabel = parseISO(o.today).toLocaleDateString("es", { weekday: "long", day: "numeric", month: "long" });
+  const { mood, text } = mascotState(o);
+  const swatches = ["--accent", "--win", "--streak", "--loss", "--info", "--text-2", "--line-2", "--muted"]
+    .map((v) => `<i style="background:var(${v})"></i>`).join("");
+
+  const fetch = `
+    <div class="fetch">
+      <div class="fetch-art"><span data-mascot="${mood}" data-scale="10" id="dash-mascot"></span></div>
+      <div class="fetch-info">
+        <div class="host">${esc(userName())}@dle-tracker</div>
+        <hr>
+        ${kv([
+          ["fecha", esc(dateLabel)],
+          ["juegos", o.total_games],
+          ["hoy", `${o.played_today}/${o.total_games} ${asciiBar(o.played_today, o.total_games || 1, 12)}`],
+          ["partidas", o.total_sessions],
+          ["victorias", `<span class="c-win">${o.wins}</span>`],
+          ["derrotas", `<span class="c-loss">${o.losses}</span>`],
+          ["% victorias", pct(o.win_rate)],
+          ["racha", `<span class="c-streak">${o.current_streak} días</span>`],
+          ["mejor racha", `${o.best_streak} días`],
+        ])}
+        <div class="swatches" aria-hidden="true">${swatches}</div>
+        <div class="speech"><span data-text="${esc(text)}"></span></div>
+      </div>
+    </div>`;
 
   return `
-    <div class="page-head">
-      <div><h1>Dashboard</h1><p>${esc(dateLabel)}</p></div>
-      <button class="btn" data-new-game>＋ Agregar juego</button>
-    </div>
-    <div class="tiles four">
-      ${tile("Juegos", o.total_games)}
-      ${tile("Jugados hoy", `${o.played_today}<small> / ${o.total_games}</small>`)}
-      ${tile("Partidas", o.total_sessions)}
-      ${tile("Victorias", o.wins)}
-      ${tile("Derrotas", o.losses)}
-      ${tile("% victorias", pct(o.win_rate))}
-      ${tile("🔥 Racha actual", `${o.current_streak}<small> días</small>`, "streak")}
-      ${tile("🏆 Mejor racha", `${o.best_streak}<small> días</small>`)}
-    </div>
-
+    ${pageHead({
+      cmd: "dlefetch",
+      title: "dashboard",
+      actions: `<a class="btn" href="#/roulette" data-spin-link>🎲 ruleta</a><button class="btn primary" data-new-game>+ juego</button>`,
+    })}
+    ${pane("sistema", fetch)}
     <section class="section">
       <div class="section-head">
-        <h2>Mis juegos</h2>
-        <span class="muted small">${o.pending_today.length ? `${o.pending_today.length} pendiente(s) hoy` : "¡Todo jugado hoy! 🎉"}</span>
+        <div class="prompt"><span class="u">$</span> <span class="cmd">ls juegos/ --sort=pendientes</span></div>
+        <span class="muted small">${o.pending_today.length ? `${o.pending_today.length} pendiente(s)` : "todo jugado ✓"}</span>
       </div>
       ${active.length
         ? `<div class="game-grid">${active.map((g) => gameCard(g, cards[g.id])).join("")}</div>`
-        : '<div class="card empty">No tienes juegos activos. <button class="btn primary sm" data-new-game>Agregar juego</button></div>'}
+        : pane("", '<p class="empty">no hay juegos activos <button class="btn primary" data-new-game>+ juego</button></p>')}
     </section>
-
     <section class="section grid-2">
-      ${weekCard(o.week)}
-      <div>
-        <div class="section-head"><h2>Logros</h2></div>
-        ${achievementsHtml(o.achievements)}
-      </div>
+      ${weekPane(o.week, { title: "esta semana" })}
+      ${achievementsPane(o.achievements)}
     </section>`;
 }
 
@@ -486,99 +565,249 @@ async function renderGames() {
     const c = cards[g.id];
     return `
       <li class="manage-row ${g.active ? "" : "inactive"}">
+        <span class="ls-perm">${g.active ? "-rwxr-xr-x" : "-r--r--r--"}</span>
         <span class="game-icon" aria-hidden="true">${esc(g.icon)}</span>
         <div class="grow">
-          <a class="game-title" href="#/game/${g.id}">${esc(g.name)}</a>
-          ${g.category ? `<span class="badge cat">${esc(g.category)}</span>` : ""}
-          ${g.active ? "" : '<span class="badge pending">Inactivo</span>'}
-          <div class="muted small">${esc(g.description || "")}${g.description ? " · " : ""}${c?.played || 0} partidas · métrica: ${METRICS[g.primary_metric].label.toLowerCase()}</div>
+          <a href="#/game/${g.id}"><b>${esc(g.name)}</b></a>
+          ${g.category ? `<span class="tag cat">#${esc(slug(g.category))}</span>` : ""}
+          ${g.active ? "" : '<span class="tag pending">[inactivo]</span>'}
+          <div class="muted small">${esc(g.description || "")}${g.description ? " · " : ""}${c?.played || 0} partidas · métrica: ${METRICS[g.primary_metric].label}</div>
         </div>
-        ${g.url ? `<a class="btn sm ghost" href="${esc(g.url)}" target="_blank" rel="noopener noreferrer" title="Jugar">▶</a>` : ""}
-        <button class="btn sm" data-edit-game="${g.id}">Editar</button>
-        <button class="btn sm" data-toggle-game="${g.id}">${g.active ? "Desactivar" : "Activar"}</button>
-        <button class="btn sm danger ghost" data-delete-game="${g.id}">Eliminar</button>
+        <span class="card-actions">
+          ${g.url ? `<a class="btn" href="${esc(g.url)}" target="_blank" rel="noopener noreferrer">▶</a>` : ""}
+          <button class="btn" data-edit-game="${g.id}">editar</button>
+          <button class="btn" data-toggle-game="${g.id}">${g.active ? "desactivar" : "activar"}</button>
+          <button class="btn danger" data-delete-game="${g.id}">rm</button>
+        </span>
       </li>`;
   });
   return `
-    <div class="page-head">
-      <div><h1>Mis juegos</h1><p>Agrega, edita, desactiva o elimina juegos.</p></div>
-      <button class="btn primary" data-new-game>＋ Agregar juego</button>
-    </div>
-    <div class="card">${rows.length ? `<ul class="list">${rows.join("")}</ul>` : '<p class="empty">Aún no tienes juegos.</p>'}</div>`;
+    ${pageHead({
+      cmd: "ls -la juegos/",
+      title: "juegos",
+      sub: `total ${state.games.length}`,
+      actions: '<button class="btn primary" data-new-game>+ nuevo juego</button>',
+    })}
+    ${pane("juegos/", rows.length ? `<ul class="list">${rows.join("")}</ul>` : '<p class="empty">aún no tienes juegos</p>')}`;
 }
 
 /* ================================================================ página de juego */
 
 async function renderGame(id) {
   const game = gameById(id);
-  if (!game) throw new Error("Juego no encontrado");
+  if (!game) throw new Error("juego no encontrado");
   const s = await api(`/api/stats/${game.id}`);
   await loadOverview();
   state.gameStats = s;
   const metric = game.primary_metric;
   const trendLabel = {
-    improving: '<span class="trend delta-good">▲ Mejorando</span>',
-    worsening: '<span class="trend delta-bad">▼ Empeorando</span>',
-    stable: '<span class="trend">＝ Estable</span>',
-    insufficient_data: '<span class="trend muted">Faltan datos para ver la tendencia</span>',
+    improving: '<span class="trend delta-good">▲ mejorando</span>',
+    worsening: '<span class="trend delta-bad">▼ empeorando</span>',
+    stable: '<span class="trend">= estable</span>',
+    insufficient_data: '<span class="muted">faltan datos</span>',
   }[s.trend.direction];
 
   const recent = s.recent.map((r) => `
     <li>
-      <span class="num" style="width:90px">${fmtDate(r.played_at)}</span>
-      ${resultBadge(r.result)}
-      <span class="grow muted small">${esc(sessionSummary(game, r))}${r.notes ? ` · ${esc(r.notes)}` : ""}</span>
-      <button class="btn sm ghost" data-edit-session="${r.id}">Editar</button>
+      <span class="num">${fmtDate(r.played_at, { relative: false })}</span>
+      ${resultTag(r.result)}
+      <span class="grow dim small">${esc(sessionSummary(game, r))}${r.notes ? ` # ${esc(r.notes)}` : ""}</span>
+      <button class="btn" data-edit-session="${r.id}">editar</button>
     </li>`).join("");
 
+  const summary = kv([
+    ["racha", `<span class="c-streak">${s.current_streak} días</span>`],
+    ["mejor racha", `${s.best_streak} días`],
+    ["partidas", s.played],
+    ["victorias", `<span class="c-win">${s.wins}</span>`],
+    ["derrotas", `<span class="c-loss">${s.losses}</span>`],
+    ["% victorias", `${pct(s.win_rate)} ${s.win_rate != null ? asciiBar(s.win_rate, 100, 12) : ""}`],
+    ...trackedMetrics(game).map((m) => [`prom. ${METRICS[m].label}`, fmtMetric(m, s.averages[m])]),
+    ["mejor", s.best ? `${fmtMetric(metric, s.best[metric])} <span class="muted">(${fmtDate(s.best.played_at, { relative: false })})</span>` : "—"],
+    ["peor", s.worst ? `${fmtMetric(metric, s.worst[metric])} <span class="muted">(${fmtDate(s.worst.played_at, { relative: false })})</span>` : "—"],
+    ["tendencia", trendLabel],
+  ]);
+
   return `
-    <div class="page-head">
-      <div>
-        <h1>${esc(game.icon)} ${esc(game.name)} ${game.active ? "" : '<span class="badge pending">Inactivo</span>'}</h1>
-        <p>${esc(game.description || game.category || "")}</p>
-      </div>
-      <div class="card-actions">
-        ${game.url ? `<a class="btn" href="${esc(game.url)}" target="_blank" rel="noopener noreferrer">▶ Jugar</a>` : ""}
-        <button class="btn" data-edit-game="${game.id}">Editar</button>
-        <button class="btn primary" data-log="${game.id}">＋ Registrar resultado</button>
-      </div>
+    ${pageHead({
+      cmd: `cat juegos/${slug(game.name)}`,
+      title: `${esc(game.icon)} ${esc(game.name)} ${game.active ? "" : '<span class="tag pending small">[inactivo]</span>'}`,
+      sub: esc(game.description || game.category || ""),
+      actions: `
+        ${game.url ? `<a class="btn" href="${esc(game.url)}" target="_blank" rel="noopener noreferrer">▶ jugar</a>` : ""}
+        <button class="btn" data-edit-game="${game.id}">editar</button>
+        <button class="btn primary" data-log="${game.id}">+ registrar</button>`,
+    })}
+    <div class="grid-2">
+      ${pane("resumen", summary)}
+      ${pane(`evolución · ${METRICS[metric].label}`, `
+        <div class="chart-box"><canvas id="evolution-chart" aria-label="Evolución de ${METRICS[metric].label}"></canvas></div>
+        <p class="muted small" style="margin:8px 0 0"><span class="c-win">■</span> victoria · <span class="c-loss">■</span> derrota
+        ${s.trend.recent_avg != null && s.trend.previous_avg != null ? ` · últimas 10: ${fmtMetric(metric, s.trend.recent_avg)} vs 10 anteriores: ${fmtMetric(metric, s.trend.previous_avg)}` : ""}</p>`)}
     </div>
-    <div class="tiles">
-      ${tile("🔥 Racha actual", s.current_streak, "streak")}
-      ${tile("🏆 Mejor racha", s.best_streak)}
-      ${tile("Partidas", s.played)}
-      ${tile("Victorias", s.wins)}
-      ${tile("Derrotas", s.losses)}
-      ${tile("% victorias", pct(s.win_rate))}
-      ${trackedMetrics(game).map((m) => tile(`Promedio ${METRICS[m].label.toLowerCase()}`, fmtMetric(m, s.averages[m]))).join("")}
-      ${tile("Mejor resultado", s.best ? fmtMetric(metric, s.best[metric]) : "—")}
-      ${tile("Peor resultado", s.worst ? fmtMetric(metric, s.worst[metric]) : "—")}
-    </div>
-
-    <section class="section card">
-      <div class="section-head"><h2>Evolución · ${METRICS[metric].label}</h2>${trendLabel}</div>
-      <div class="chart-box"><canvas id="evolution-chart" aria-label="Evolución de ${METRICS[metric].label}"></canvas></div>
-      <p class="muted small" style="margin:8px 0 0">Puntos: <span style="color:var(--win)">●</span> victoria · <span style="color:var(--loss)">●</span> derrota.
-      ${s.trend.recent_avg != null && s.trend.previous_avg != null ? `Últimas 10 partidas: ${fmtMetric(metric, s.trend.recent_avg)} vs. 10 anteriores: ${fmtMetric(metric, s.trend.previous_avg)}.` : ""}</p>
-    </section>
-
     <section class="section grid-2">
-      ${weekCard(s.week, { title: "Esta semana vs. anterior", metricKey: metric, lowerBetter: game.lower_is_better })}
-      <div class="card">
-        <div class="section-head"><h2>Distribución</h2></div>
-        <div class="chart-box short"><canvas id="distribution-chart" aria-label="Distribución"></canvas></div>
-      </div>
+      ${weekPane(s.week, { title: "esta semana vs anterior", metricKey: metric, lowerBetter: game.lower_is_better })}
+      ${pane("distribución", '<div class="chart-box short"><canvas id="distribution-chart" aria-label="Distribución"></canvas></div>')}
     </section>
-
-    <section class="section card">
-      <div class="section-head"><h2>Historial reciente</h2><a href="#/history" data-history-game="${game.id}">Ver todo →</a></div>
-      ${recent ? `<ul class="list">${recent}</ul>` : '<p class="empty">Aún no hay partidas registradas.</p>'}
+    <section class="section">
+      ${pane("tail partidas.log", recent ? `<ul class="list">${recent}</ul>` : '<p class="empty">aún no hay partidas</p>',
+        { aside: `<a href="#/history" data-history-game="${game.id}">ver todo →</a>` })}
     </section>`;
 }
 
 afterRender.game = () => {
   evolutionChart($("#evolution-chart"), state.gameStats);
   distributionChart($("#distribution-chart"), state.gameStats);
+};
+
+/* ================================================================ ruleta */
+
+function rouletteCandidates() {
+  const active = state.games.filter((g) => g.active);
+  if (!state.roulette.onlyPending) return active;
+  const pending = new Set(state.overview?.pending_today || []);
+  return active.filter((g) => pending.has(g.id));
+}
+
+function wheelSvg(games) {
+  const R = 190;
+  const n = games.length;
+  const per = 360 / n;
+  const point = (deg, r) => {
+    const a = (deg * Math.PI) / 180;
+    return [r * Math.sin(a), -r * Math.cos(a)];
+  };
+  const segs = games.map((g, i) => {
+    const cls = `seg ${i % 2 ? "b" : "a"}`;
+    let shape;
+    if (n === 1) {
+      shape = `<circle class="${cls}" r="${R}" data-seg="${i}"/>`;
+    } else {
+      const [x1, y1] = point(i * per - per / 2, R);
+      const [x2, y2] = point(i * per + per / 2, R);
+      shape = `<path class="${cls}" data-seg="${i}" d="M0 0 L${x1.toFixed(2)} ${y1.toFixed(2)} A${R} ${R} 0 ${per > 180 ? 1 : 0} 1 ${x2.toFixed(2)} ${y2.toFixed(2)} Z"/>`;
+    }
+    const name = g.name.length > 12 ? `${g.name.slice(0, 11)}…` : g.name;
+    const label = `<text data-seg-label="${i}" transform="rotate(${i * per - 90}) translate(${R * 0.58} 0)" text-anchor="middle">${esc(g.icon)} ${esc(name)}</text>`;
+    return shape + label;
+  }).join("");
+  return `<svg class="wheel" id="wheel" viewBox="-200 -200 400 400" role="img" aria-label="Ruleta con ${n} juegos"
+    style="transform: rotate(${state.roulette.rotation}deg)">
+    <circle r="198" fill="none" stroke="var(--accent)" stroke-width="2"/>
+    ${segs}
+  </svg>`;
+}
+
+async function renderRoulette() {
+  const o = await loadOverview();
+  const r = state.roulette;
+  // Si ya está todo jugado, no tiene sentido filtrar por pendientes.
+  if (r.onlyPending && !o.pending_today.length) r.onlyPending = false;
+  const games = rouletteCandidates();
+  state.wheelGames = games;
+  const res = r.result && games.find((g) => g.id === r.result) ? gameById(r.result) : null;
+
+  const wheel = games.length
+    ? `<div class="wheel-wrap">
+         <span class="wheel-pointer" aria-hidden="true">▼</span>
+         ${wheelSvg(games)}
+         <div class="wheel-hub"><span data-mascot="${r.spinning ? "spin" : res ? "happy" : "idle"}" data-scale="5" id="wheel-mascot"></span></div>
+       </div>`
+    : '<p class="empty">no hay juegos para girar</p>';
+
+  const resultHtml = res
+    ? `<div class="result-name">${esc(res.icon)} ${esc(res.name)}</div>
+       <p class="dim small">${esc(res.description || "")}</p>
+       <div class="card-actions">
+         ${res.url ? `<a class="btn primary" href="${esc(res.url)}" target="_blank" rel="noopener noreferrer">▶ jugar ahora</a>` : ""}
+         <button class="btn" data-log="${res.id}">+ registrar</button>
+       </div>`
+    : `<p class="dim">Pulsa <b>girar</b> (o la tecla <kbd>r</kbd>) y Bit elegirá un juego al azar.</p>`;
+
+  return `
+    ${pageHead({
+      cmd: `shuf -n 1 ${r.onlyPending ? "pendientes_hoy" : "juegos_activos"}.txt`,
+      title: "ruleta",
+      sub: "¿No sabes qué jugar? Deja que el azar decida.",
+    })}
+    <div class="roulette">
+      ${pane(`${games.length} juego(s)`, wheel)}
+      <div class="stack">
+        ${pane("opciones", `
+          <div class="segmented" role="radiogroup" aria-label="Juegos en la ruleta">
+            <label><input type="radio" name="pool" value="pending" ${r.onlyPending ? "checked" : ""} ${o.pending_today.length ? "" : "disabled"}><span>pendientes (${o.pending_today.length})</span></label>
+            <label><input type="radio" name="pool" value="all" ${r.onlyPending ? "" : "checked"}><span>todos (${state.games.filter((g) => g.active).length})</span></label>
+          </div>
+          <div style="margin-top:14px"><button class="btn primary big" id="spin-btn" ${games.length && !r.spinning ? "" : "disabled"}>🎲 girar</button></div>`)}
+        ${pane("resultado", `<div id="roulette-result">${resultHtml}</div>`)}
+        ${pane("stdout", `<pre class="console-log" id="roulette-log">${r.log.length ? r.log.join("\n") : '<span class="muted">esperando…</span>'}</pre>`)}
+      </div>
+    </div>`;
+}
+
+function rouletteLog(line) {
+  const r = state.roulette;
+  r.log.push(line);
+  if (r.log.length > 30) r.log.shift();
+  const el = $("#roulette-log");
+  if (el) {
+    el.innerHTML = r.log.join("\n");
+    el.scrollTop = el.scrollHeight;
+  }
+}
+
+function spinRoulette() {
+  const r = state.roulette;
+  const games = state.wheelGames || [];
+  const wheel = $("#wheel");
+  if (r.spinning || !games.length || !wheel) return;
+  r.spinning = true;
+  r.result = null;
+  $("#spin-btn").disabled = true;
+  $$("#wheel .win").forEach((el) => el.classList.remove("win"));
+  Mascot.setMood($("#wheel-mascot"), "spin");
+  $("#roulette-result").innerHTML = '<p class="dim">girando<span class="cursor"></span></p>';
+  rouletteLog(`<b>$</b> shuf -n 1 ${r.onlyPending ? "pendientes_hoy" : "juegos_activos"}.txt`);
+
+  const n = games.length;
+  const per = 360 / n;
+  const index = Math.floor(Math.random() * n);
+  // Rotación necesaria para que el centro del segmento quede bajo el puntero (arriba).
+  const target = ((-index * per) % 360 + 360) % 360;
+  const current = ((r.rotation % 360) + 360) % 360;
+  const jitter = (Math.random() - 0.5) * per * 0.6;
+  r.rotation += 360 * 6 + ((target - current + 360) % 360) + jitter;
+  const finish = () => {
+    if (!r.spinning) return;
+    r.spinning = false;
+    const game = games[index];
+    r.result = game.id;
+    rouletteLog(`→ ${esc(game.icon)} ${esc(game.name)}`);
+    if (state.route === "roulette") refresh();
+  };
+  wheel.addEventListener("transitionend", finish, { once: true });
+  wheel.style.transform = `rotate(${r.rotation}deg)`;
+  // Sin animación (movimiento reducido) transitionend no se dispara.
+  setTimeout(finish, REDUCED_MOTION.matches ? 50 : 4600);
+}
+
+afterRender.roulette = () => {
+  const r = state.roulette;
+  if (r.result) {
+    const i = (state.wheelGames || []).findIndex((g) => g.id === r.result);
+    $(`#wheel [data-seg="${i}"]`)?.classList.add("win");
+    $(`#wheel [data-seg-label="${i}"]`)?.classList.add("win");
+  }
+  $("#spin-btn")?.addEventListener("click", spinRoulette);
+  $$('input[name="pool"]').forEach((input) => input.addEventListener("change", () => {
+    r.onlyPending = input.value === "pending";
+    r.result = null;
+    refresh();
+  }));
+  if (r.autoSpin) {
+    r.autoSpin = false;
+    setTimeout(spinRoulette, 250);
+  }
 };
 
 /* ================================================================ historial */
@@ -596,52 +825,60 @@ async function renderHistory() {
       `<td class="${cls} ${value === "—" ? "empty-cell" : ""}" data-label="${label}">${value}</td>`;
     return `
       <tr>
-        <td class="num" data-label="">${fmtDate(s.played_at)}</td>
-        <td data-label="">${g ? `<a href="#/game/${g.id}">${esc(g.icon)} ${esc(g.name)}</a>` : "—"}</td>
-        <td data-label="">${resultBadge(s.result)}</td>
-        ${cell("Puntaje", fmtNum(s.score))}
-        ${cell("Intentos", fmtNum(s.attempts))}
-        ${cell("Errores", fmtNum(s.errors))}
-        ${cell("Tiempo", fmtTime(s.time_seconds))}
-        <td class="notes-cell ${s.notes ? "" : "empty-cell"}" data-label="" title="${esc(s.notes)}">${esc(s.notes)}</td>
+        <td class="num nowrap" data-label="">${fmtDate(s.played_at)}</td>
+        <td class="nowrap" data-label="">${g ? `<a href="#/game/${g.id}">${esc(g.icon)} ${esc(g.name)}</a>` : "—"}</td>
+        <td class="nowrap" data-label="">${resultTag(s.result)}</td>
+        ${cell("puntaje", fmtNum(s.score))}
+        ${cell("intentos", fmtNum(s.attempts))}
+        ${cell("errores", fmtNum(s.errors))}
+        ${cell("tiempo", fmtTime(s.time_seconds))}
+        <td class="notes-cell ${s.notes ? "" : "empty-cell"}" data-label="" title="${esc(s.notes)}">${s.notes ? `# ${esc(s.notes)}` : ""}</td>
         <td class="actions">
-          <button class="btn sm ghost" data-edit-session="${s.id}" aria-label="Editar">✎</button>
-          <button class="btn sm danger ghost" data-delete-session="${s.id}" aria-label="Eliminar">🗑</button>
+          <button class="btn" data-edit-session="${s.id}" aria-label="Editar">edit</button>
+          <button class="btn danger" data-delete-session="${s.id}" aria-label="Eliminar">rm</button>
         </td>
       </tr>`;
   }).join("");
   const hasFilters = f.game_id || f.result || f.date_from || f.date_to;
+  const grepParts = [
+    f.game_id && `--juego=${slug(gameById(f.game_id)?.name || f.game_id)}`,
+    f.result && `--resultado=${f.result}`,
+    f.date_from && `--desde=${f.date_from}`,
+    f.date_to && `--hasta=${f.date_to}`,
+  ].filter(Boolean).join(" ");
 
   return `
-    <div class="page-head">
-      <div><h1>Historial</h1><p>${sessions.length} partida(s)${hasFilters ? " con los filtros actuales" : ""}.</p></div>
-      <button class="btn primary" data-log="">＋ Registrar partida</button>
-    </div>
+    ${pageHead({
+      cmd: `grep partidas.log ${grepParts}${f.order === "asc" ? " | sort" : " | sort -r"}`,
+      title: "historial",
+      sub: `${sessions.length} línea(s)${hasFilters ? " con filtros" : ""}`,
+      actions: '<button class="btn primary" data-log="">+ registrar</button>',
+    })}
     <form class="filters" id="history-filters">
-      <label class="field">Juego<select name="game_id"><option value="">Todos</option>${gameOptions}</select></label>
-      <label class="field">Resultado
+      <label class="field">juego<select name="game_id"><option value="">*</option>${gameOptions}</select></label>
+      <label class="field">resultado
         <select name="result">
-          <option value="">Todos</option>
-          <option value="win" ${f.result === "win" ? "selected" : ""}>Victoria</option>
-          <option value="loss" ${f.result === "loss" ? "selected" : ""}>Derrota</option>
+          <option value="">*</option>
+          <option value="win" ${f.result === "win" ? "selected" : ""}>victoria</option>
+          <option value="loss" ${f.result === "loss" ? "selected" : ""}>derrota</option>
         </select>
       </label>
-      <label class="field">Desde<input type="date" name="date_from" value="${f.date_from}"></label>
-      <label class="field">Hasta<input type="date" name="date_to" value="${f.date_to}"></label>
-      ${hasFilters ? '<button type="button" class="btn ghost" data-clear-filters>Limpiar</button>' : ""}
+      <label class="field">desde<input type="date" name="date_from" value="${f.date_from}"></label>
+      <label class="field">hasta<input type="date" name="date_to" value="${f.date_to}"></label>
+      ${hasFilters ? '<button type="button" class="btn" data-clear-filters>limpiar</button>' : ""}
     </form>
-    <div class="card table-wrap">
+    ${pane("partidas.log", `<div class="table-wrap">
       ${rows ? `
         <table class="history-table">
           <thead><tr>
-            <th><button data-toggle-order title="Cambiar orden">Fecha ${f.order === "desc" ? "↓" : "↑"}</button></th>
-            <th>Juego</th><th>Resultado</th>
-            <th class="num">Puntaje</th><th class="num">Intentos</th><th class="num">Errores</th><th class="num">Tiempo</th>
-            <th>Notas</th><th></th>
+            <th><button data-toggle-order title="Cambiar orden">fecha ${f.order === "desc" ? "↓" : "↑"}</button></th>
+            <th>juego</th><th>resultado</th>
+            <th class="num">puntaje</th><th class="num">intentos</th><th class="num">errores</th><th class="num">tiempo</th>
+            <th>notas</th><th></th>
           </tr></thead>
           <tbody>${rows}</tbody>
-        </table>` : '<p class="empty">No hay partidas que coincidan.</p>'}
-    </div>`;
+        </table>` : '<p class="empty">no hay partidas que coincidan</p>'}
+    </div>`)}`;
 }
 
 afterRender.history = () => {
@@ -664,67 +901,56 @@ async function renderStats() {
   const rows = perGame.map((s) => {
     const g = gameById(s.game_id);
     const m = s.primary_metric;
-    const trend = { improving: "▲", worsening: "▼", stable: "＝", insufficient_data: "" }[s.trend.direction];
+    const trend = { improving: "▲", worsening: "▼", stable: "=", insufficient_data: "" }[s.trend.direction];
     const trendCls = { improving: "delta-good", worsening: "delta-bad" }[s.trend.direction] || "";
     return `
       <tr>
         <td class="nowrap"><a href="#/game/${g.id}">${esc(g.icon)} ${esc(g.name)}</a></td>
         <td class="num">${s.played}</td>
-        <td class="num">${s.wins}</td>
-        <td class="num">${s.losses}</td>
+        <td class="num c-win">${s.wins}</td>
+        <td class="num c-loss">${s.losses}</td>
         <td class="num">${pct(s.win_rate)}</td>
         <td class="muted">${METRICS[m].label}</td>
         <td class="num">${fmtMetric(m, s.averages[m])}</td>
         <td class="num">${s.best ? fmtMetric(m, s.best[m]) : "—"}</td>
         <td class="num">${s.worst ? fmtMetric(m, s.worst[m]) : "—"}</td>
-        <td class="num">${s.current_streak}</td>
+        <td class="num c-streak">${s.current_streak}</td>
         <td class="num">${s.best_streak}</td>
         <td class="${trendCls}" title="Tendencia">${trend}</td>
       </tr>`;
   }).join("");
 
+  const winBar = o.total_sessions
+    ? `<p>${asciiBar(o.wins, o.total_sessions, 30)}</p>
+       ${kv([["victorias", `<span class="c-win">${o.wins}</span> (${pct(o.win_rate)})`], ["derrotas", `<span class="c-loss">${o.losses}</span>`]])}`
+    : "";
+
   return `
-    <div class="page-head"><div><h1>Estadísticas</h1><p>Tu rendimiento global y por juego.</p></div></div>
-    <div class="tiles">
-      ${tile("Partidas", o.total_sessions)}
-      ${tile("% victorias", pct(o.win_rate))}
-      ${tile("🔥 Racha actual", o.current_streak, "streak")}
-      ${tile("🏆 Mejor racha", o.best_streak)}
+    ${pageHead({ cmd: "dle stats --all", title: "estadísticas", sub: `${o.total_sessions} partidas · racha ${o.current_streak} · mejor ${o.best_streak}` })}
+    <div class="grid-2">
+      ${pane("partidas por día", '<div class="chart-box short"><canvas id="daily-chart"></canvas></div>', { aside: '<span class="muted">30 días</span>' })}
+      ${pane("victorias / derrotas", `<div class="chart-box short"><canvas id="winloss-chart"></canvas></div>${winBar}`)}
     </div>
-    <section class="section grid-2">
-      <div class="card">
-        <div class="section-head"><h2>Partidas por día</h2><span class="muted small">últimos 30 días</span></div>
-        <div class="chart-box short"><canvas id="daily-chart"></canvas></div>
-      </div>
-      <div class="card">
-        <div class="section-head"><h2>Victorias / derrotas</h2></div>
-        <div class="chart-box short"><canvas id="winloss-chart"></canvas></div>
-      </div>
-    </section>
-    <section class="section card">
-      <div class="section-head">
-        <h2>Evolución por juego</h2>
-        ${perGame.length ? `<select id="stats-game" style="width:auto">${perGame.map((s) => {
+    <section class="section">
+      ${pane("evolución por juego", `
+        ${perGame.length ? `<label class="field" style="max-width:260px">juego<select id="stats-game">${perGame.map((s) => {
           const g = gameById(s.game_id);
           return `<option value="${g.id}">${esc(g.icon)} ${esc(g.name)}</option>`;
-        }).join("")}</select>` : ""}
-      </div>
-      <div class="chart-box"><canvas id="game-evolution-chart"></canvas></div>
+        }).join("")}</select></label>` : ""}
+        <div class="chart-box"><canvas id="game-evolution-chart"></canvas></div>`)}
     </section>
-    <section class="section card table-wrap">
-      <div class="section-head"><h2>Por juego</h2></div>
-      ${rows ? `<table>
+    <section class="section">
+      ${pane("por juego", `<div class="table-wrap">${rows ? `<table>
         <thead><tr>
-          <th>Juego</th><th class="num">Partidas</th><th class="num">Vict.</th><th class="num">Derr.</th><th class="num">%</th>
-          <th>Métrica</th><th class="num">Promedio</th><th class="num">Mejor</th><th class="num">Peor</th>
-          <th class="num">Racha</th><th class="num">Mejor racha</th><th>Tend.</th>
-        </tr></thead><tbody>${rows}</tbody></table>` : '<p class="empty">Registra partidas para ver estadísticas.</p>'}
+          <th>juego</th><th class="num">part.</th><th class="num">ok</th><th class="num">fail</th><th class="num">%</th>
+          <th>métrica</th><th class="num">prom.</th><th class="num">mejor</th><th class="num">peor</th>
+          <th class="num">racha</th><th class="num">máx.</th><th>tend.</th>
+        </tr></thead><tbody>${rows}</tbody></table>` : '<p class="empty">registra partidas para ver estadísticas</p>'}</div>`)}
     </section>`;
 }
 
 afterRender.stats = () => {
   const { o, perGame, recent, since } = state.statsData;
-  // Partidas por día (30 días, incluye días sin jugar).
   const counts = {};
   recent.forEach((s) => { counts[s.played_at] = (counts[s.played_at] || 0) + 1; });
   const days = Array.from({ length: 30 }, (_, i) => addDays(since, i));
@@ -732,7 +958,7 @@ afterRender.stats = () => {
     type: "bar",
     data: {
       labels: days.map((d) => fmtDate(d, { relative: false }).slice(0, 5)),
-      datasets: [{ label: "Partidas", data: days.map((d) => counts[d] || 0), backgroundColor: cssVar("--accent"), borderRadius: 4, maxBarThickness: 18 }],
+      datasets: [{ label: "partidas", data: days.map((d) => counts[d] || 0), backgroundColor: cssVar("--accent"), maxBarThickness: 14 }],
     },
     options: {
       plugins: { legend: { display: false } },
@@ -744,27 +970,26 @@ afterRender.stats = () => {
     makeChart($("#winloss-chart"), {
       type: "doughnut",
       data: {
-        labels: [`Victorias (${o.wins})`, `Derrotas (${o.losses})`],
+        labels: ["victorias", "derrotas"],
         datasets: [{ data: [o.wins, o.losses], backgroundColor: [cssVar("--win"), cssVar("--loss")], borderColor: cssVar("--surface"), borderWidth: 2 }],
       },
-      options: { cutout: "65%", plugins: { legend: { position: "right" } } },
+      options: { cutout: "70%", plugins: { legend: { position: "right" } } },
     });
   } else {
-    $("#winloss-chart").parentElement.innerHTML = '<p class="empty">Sin partidas todavía.</p>';
+    $("#winloss-chart").parentElement.innerHTML = '<p class="empty">sin partidas todavía</p>';
   }
 
   const select = $("#stats-game");
   const draw = () => {
-    state.charts.filter((c) => c.canvas.id === "game-evolution-chart").forEach((c) => c.destroy());
+    state.charts.filter((c) => c.canvas?.id === "game-evolution-chart").forEach((c) => c.destroy());
     state.charts = state.charts.filter((c) => c.canvas?.id !== "game-evolution-chart");
-    const s = perGame.find((p) => String(p.game_id) === select.value);
-    evolutionChart($("#game-evolution-chart"), s);
+    evolutionChart($("#game-evolution-chart"), perGame.find((p) => String(p.game_id) === select.value));
   };
   if (select) {
     select.addEventListener("change", draw);
     draw();
   } else {
-    $("#game-evolution-chart").parentElement.innerHTML = '<p class="empty">Sin datos todavía.</p>';
+    $("#game-evolution-chart").parentElement.innerHTML = '<p class="empty">sin datos todavía</p>';
   }
 };
 
@@ -776,18 +1001,19 @@ async function renderCalendar() {
     state.calendar = { year: t.getFullYear(), month: t.getMonth() + 1, selected: state.today };
   }
   const { year, month, selected } = state.calendar;
-  const first = `${year}-${String(month).padStart(2, "0")}-01`;
+  const mm = String(month).padStart(2, "0");
+  const first = `${year}-${mm}-01`;
   const daysInMonth = new Date(year, month, 0).getDate();
-  const last = `${year}-${String(month).padStart(2, "0")}-${String(daysInMonth).padStart(2, "0")}`;
+  const last = `${year}-${mm}-${String(daysInMonth).padStart(2, "0")}`;
   const sessions = await api(`/api/sessions?date_from=${first}&date_to=${last}&order=asc`);
   const byDay = {};
   sessions.forEach((s) => (byDay[s.played_at] ||= []).push(s));
 
   const offset = (parseISO(first).getDay() + 6) % 7; // lunes = 0
-  const cells = ["L", "M", "X", "J", "V", "S", "D"].map((d) => `<div class="cal-dow">${d}</div>`);
+  const cells = ["lu", "ma", "mi", "ju", "vi", "sá", "do"].map((d) => `<div class="cal-dow">${d}</div>`);
   for (let i = 0; i < offset; i++) cells.push('<div class="cal-day blank"></div>');
   for (let d = 1; d <= daysInMonth; d++) {
-    const iso = `${year}-${String(month).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    const iso = `${year}-${mm}-${String(d).padStart(2, "0")}`;
     const list = byDay[iso] || [];
     const cls = [
       "cal-day",
@@ -799,7 +1025,7 @@ async function renderCalendar() {
     const shown = list.slice(0, 4).map((s) => esc(gameById(s.game_id)?.icon || "•")).join("");
     const icons = list.length > 4 ? `${shown}<span class="more">+${list.length - 4}</span>` : shown;
     const label = `${d} de ${MONTHS[month - 1]}: ${list.length ? `${list.length} partida(s)` : "sin partidas"}`;
-    cells.push(`<button class="${cls}" data-day="${iso}" aria-label="${label}" ${iso > state.today ? "disabled" : ""}><span class="d">${d}</span><span class="icons" aria-hidden="true">${icons}</span>${list.length ? `<span class="cnt" aria-hidden="true">${list.length}</span>` : ""}</button>`);
+    cells.push(`<button class="${cls}" data-day="${iso}" aria-label="${label}" ${iso > state.today ? "disabled" : ""}><span class="d">${String(d).padStart(2, " ")}</span><span class="icons" aria-hidden="true">${icons}</span>${list.length ? `<span class="cnt" aria-hidden="true">${list.length}</span>` : ""}</button>`);
   }
 
   const daySessions = byDay[selected] || [];
@@ -808,75 +1034,107 @@ async function renderCalendar() {
     return `
       <li>
         <span class="game-icon" aria-hidden="true">${esc(g?.icon)}</span>
-        <div class="grow"><b>${esc(g?.name)}</b><div class="muted small">${g ? esc(sessionSummary(g, s)) : ""}${s.notes ? ` · ${esc(s.notes)}` : ""}</div></div>
-        ${resultBadge(s.result)}
-        <button class="btn sm ghost" data-edit-session="${s.id}">Editar</button>
+        <div class="grow"><b>${esc(g?.name)}</b><div class="muted small">${g ? esc(sessionSummary(g, s)) : ""}${s.notes ? ` # ${esc(s.notes)}` : ""}</div></div>
+        ${resultTag(s.result, { label: false })}
+        <button class="btn" data-edit-session="${s.id}">editar</button>
       </li>`;
   }).join("");
   const playedDays = Object.keys(byDay).length;
-  const selectedInMonth = selected?.startsWith(first.slice(0, 7));
+  const selectedInMonth = selected?.startsWith(`${year}-${mm}`);
 
   return `
-    <div class="page-head">
-      <div><h1>Calendario</h1><p>${playedDays} día(s) jugados este mes.</p></div>
-      <div class="cal-head">
-        <button class="btn sm" data-cal="-1" aria-label="Mes anterior">←</button>
-        <h2>${MONTHS[month - 1]} ${year}</h2>
-        <button class="btn sm" data-cal="1" aria-label="Mes siguiente">→</button>
-        <button class="btn sm ghost" data-cal="0">Hoy</button>
-      </div>
-    </div>
+    ${pageHead({
+      cmd: `cal ${month} ${year}`,
+      title: "calendario",
+      sub: `${playedDays} día(s) jugados este mes`,
+      actions: `
+        <span class="cal-head">
+          <button class="btn" data-cal="-1" aria-label="Mes anterior">←</button>
+          <h2>${MONTHS[month - 1]} ${year}</h2>
+          <button class="btn" data-cal="1" aria-label="Mes siguiente">→</button>
+          <button class="btn" data-cal="0">hoy</button>
+        </span>`,
+    })}
     <div class="grid-2" style="align-items:start">
-      <div class="card"><div class="calendar">${cells.join("")}</div></div>
-      <div class="card">
-        ${selectedInMonth ? `
-          <div class="section-head">
-            <h2>${fmtDate(selected)}${selected === state.today || selected === addDays(state.today, -1) ? ` <span class="muted small">${fmtDate(selected, { relative: false })}</span>` : ""}</h2>
-            <button class="btn sm primary" data-log="" data-log-date="${selected}">＋ Registrar</button>
-          </div>
-          ${dayList ? `<ul class="list">${dayList}</ul>` : '<p class="empty">No jugaste este día.</p>'}`
-          : '<p class="empty">Selecciona un día para ver sus partidas.</p>'}
-      </div>
+      ${pane(`${MONTHS[month - 1]} ${year}`, `<div class="calendar">${cells.join("")}</div>`)}
+      ${selectedInMonth
+        ? pane(fmtDate(selected, { relative: false }), `
+            ${dayList ? `<ul class="list">${dayList}</ul>` : '<p class="empty">no jugaste este día</p>'}
+            <div class="card-actions" style="margin-top:10px"><button class="btn primary" data-log="" data-log-date="${selected}">+ registrar en este día</button></div>`,
+          { aside: selected === state.today ? '<span class="muted">hoy</span>' : "" })
+        : pane("día", '<p class="empty">selecciona un día</p>')}
     </div>`;
 }
 
 /* ================================================================ configuración */
 
-function currentTheme() {
-  try { return localStorage.getItem("dle-theme") || "system"; } catch { return "system"; }
+function readPref(key, fallback) {
+  try { return localStorage.getItem(key) || fallback; } catch { return fallback; }
+}
+
+function writePref(key, value) {
+  try {
+    if (value == null) localStorage.removeItem(key); else localStorage.setItem(key, value);
+  } catch { /* almacenamiento no disponible */ }
 }
 
 function applyTheme(theme) {
-  try {
-    if (theme === "system") localStorage.removeItem("dle-theme"); else localStorage.setItem("dle-theme", theme);
-  } catch { /* almacenamiento no disponible */ }
+  writePref("dle-theme", theme === "system" ? null : theme);
   if (theme === "system") delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = theme;
 }
 
 async function renderSettings() {
-  const theme = currentTheme();
-  const opt = (value, label) => `<label><input type="radio" name="theme" value="${value}" ${theme === value ? "checked" : ""}><span>${label}</span></label>`;
+  const theme = readPref("dle-theme", "system");
+  const crt = readPref("dle-crt", "on");
+  const opt = (name, value, label, current) =>
+    `<label><input type="radio" name="${name}" value="${value}" ${current === value ? "checked" : ""}><span>${label}</span></label>`;
   return `
-    <div class="page-head"><div><h1>Configuración</h1></div></div>
+    ${pageHead({ cmd: "vim ~/.config/dle/config", title: "configuración" })}
     <div class="grid-2" style="align-items:start">
-      <div class="card">
-        <h2>Apariencia</h2>
-        <p class="muted small">Elige el tema de la interfaz.</p>
-        <div class="segmented" id="theme-picker" style="grid-template-columns:repeat(3,1fr)">
-          ${opt("system", "💻 Sistema")}${opt("light", "☀️ Claro")}${opt("dark", "🌙 Oscuro")}
-        </div>
+      <div class="stack">
+        ${pane("tema", `
+          <div class="segmented" id="theme-picker" style="grid-template-columns:repeat(2,1fr)">
+            ${opt("theme", "system", "sistema", theme)}${opt("theme", "phosphor", "phosphor", theme)}
+            ${opt("theme", "amber", "amber", theme)}${opt("theme", "paper", "paper (claro)", theme)}
+          </div>
+          <p class="muted small">«sistema» usa phosphor en modo oscuro y paper en modo claro.</p>`)}
+        ${pane("efectos", `
+          <div class="segmented" id="crt-picker">
+            ${opt("crt", "on", "scanlines on", crt)}${opt("crt", "off", "scanlines off", crt)}
+          </div>`)}
       </div>
-      <div class="card">
-        <h2>Datos</h2>
-        <p class="muted small">Los datos se guardan en SQLite (<code>data/dle_games.db</code>). Puedes descargar una copia en JSON.</p>
-        <button class="btn" id="export-btn">⬇ Exportar datos (JSON)</button>
+      <div class="stack">
+        ${pane("usuario", `
+          <label class="field">nombre en el prompt
+            <input id="user-input" maxlength="20" value="${esc(userName())}" autocomplete="off" spellcheck="false">
+          </label>`)}
+        ${pane("datos", `
+          <p class="dim small">Los datos viven en SQLite (<code>data/dle_games.db</code>).</p>
+          <button class="btn primary" id="export-btn">⬇ exportar json</button>`)}
+        ${pane("atajos", kv([
+          ["1-7", "navegar entre secciones"],
+          ["r", "girar la ruleta"],
+          ["n", "registrar partida"],
+          ["esc", "cerrar ventana"],
+        ]))}
       </div>
     </div>`;
 }
 
 afterRender.settings = () => {
   $("#theme-picker").addEventListener("change", (e) => applyTheme(e.target.value));
+  $("#crt-picker").addEventListener("change", (e) => {
+    writePref("dle-crt", e.target.value === "off" ? "off" : null);
+    if (e.target.value === "off") document.documentElement.dataset.crt = "off";
+    else delete document.documentElement.dataset.crt;
+  });
+  $("#user-input").addEventListener("change", (e) => {
+    const value = e.target.value.trim().replace(/\s+/g, "_");
+    writePref("dle-user", value || null);
+    toast(`usuario: ${userName()}`);
+    refresh();
+  });
   $("#export-btn").addEventListener("click", async () => {
     try {
       const data = await api("/api/export");
@@ -909,7 +1167,7 @@ function openGameForm(game = null) {
   gameForm.reset();
   showFormError(gameForm, "");
   gameForm.dataset.id = game?.id ?? "";
-  $("#game-form-title").textContent = game ? `Editar ${game.name}` : "Agregar juego";
+  $("#game-form-title").textContent = game ? `editar ${slug(game.name)}` : "nuevo juego";
   const g = game || { name: "", icon: "", url: "", category: "", description: "", active: true,
     track_attempts: true, track_errors: false, track_score: false, track_time: false,
     primary_metric: "attempts", lower_is_better: true };
@@ -958,7 +1216,7 @@ gameForm.addEventListener("submit", async (e) => {
   try {
     await api(id ? `/api/games/${id}` : "/api/games", { method: id ? "PUT" : "POST", body: payload });
     $("#game-dialog").close();
-    toast(id ? "Juego actualizado" : `«${name}» agregado`);
+    toast(id ? "juego actualizado" : `${name} agregado`);
     refresh();
   } catch (err) {
     showFormError(gameForm, err.message);
@@ -972,7 +1230,7 @@ const sessionForm = $("#session-form");
 function metricFieldHtml(metric, value) {
   const def = METRICS[metric];
   if (metric === "time_seconds") {
-    return `<label class="field">Tiempo (m:ss o segundos)
+    return `<label class="field">tiempo (m:ss o segundos)
       <input name="time_seconds" inputmode="numeric" placeholder="1:30" value="${value != null ? fmtTime(value) : ""}" autocomplete="off"></label>`;
   }
   const input = `<input name="${metric}" type="number" inputmode="${metric === "score" ? "decimal" : "numeric"}" ${metric === "score" ? 'step="any"' : 'min="0" step="1"'} value="${value ?? ""}">`;
@@ -999,15 +1257,16 @@ async function openSessionForm({ gameId = null, session = null, date = null } = 
   const playedAt = session?.played_at || date || state.today;
 
   if (!session && gameId) {
-    // Si ya registró ese juego en esa fecha, editar en vez de duplicar.
     const existing = await api(`/api/sessions?game_id=${gameId}&date_from=${playedAt}&date_to=${playedAt}`);
     if (existing.length) session = existing[0];
   }
   const fixedGame = session?.game_id ?? gameId;
   const activeGames = state.games.filter((g) => g.active || g.id === fixedGame);
-  el.game_id.innerHTML = activeGames.map((g) => `<option value="${g.id}">${esc(g.icon)} ${esc(g.name)}</option>`).join("");
   if (!activeGames.length) return toast("Primero agrega un juego.", "error");
-  el.game_id.value = fixedGame ?? activeGames[0].id;
+  el.game_id.innerHTML = activeGames.map((g) => `<option value="${g.id}">${esc(g.icon)} ${esc(g.name)}</option>`).join("");
+  // Sin juego fijo, proponer el primer pendiente de hoy.
+  const firstPending = state.overview?.pending_today.find((id) => activeGames.some((g) => g.id === id));
+  el.game_id.value = fixedGame ?? firstPending ?? activeGames[0].id;
   $("#session-game-field").hidden = !!fixedGame;
 
   sessionForm.dataset.id = session?.id ?? "";
@@ -1027,13 +1286,12 @@ function fillForGame(session = null) {
   const el = sessionForm.elements;
   const game = gameById(el.game_id.value);
   const suggested = state.overview?.games.find((c) => c.game_id === game.id)?.suggested || {};
-  // Valores de la partida que se edita o, al registrar, los más usados del juego.
   const values = session || {
     result: suggested.result || "win",
     attempts: suggested.attempts, errors: suggested.errors,
     score: suggested.score, time_seconds: suggested.time_seconds,
   };
-  $("#session-form-title").textContent = `${session ? "Editar" : "Registrar"} · ${game.icon} ${game.name}`;
+  $("#session-form-title").textContent = `${session ? "editar" : "registrar"} · ${slug(game.name)}`;
   el.result.value = values.result || "win";
   renderMetricFields(game, values);
 }
@@ -1069,7 +1327,7 @@ sessionForm.addEventListener("submit", async (e) => {
   };
   if (!payload.played_at) return showFormError(sessionForm, "La fecha es obligatoria.");
   if (payload.played_at > state.today) return showFormError(sessionForm, "La fecha no puede estar en el futuro.");
-  if (!payload.result) return showFormError(sessionForm, "Elige Victoria o Derrota.");
+  if (!payload.result) return showFormError(sessionForm, "Elige victoria o derrota.");
 
   for (const metric of trackedMetrics(game)) {
     const input = el[metric];
@@ -1091,7 +1349,7 @@ sessionForm.addEventListener("submit", async (e) => {
   try {
     await api(id ? `/api/sessions/${id}` : "/api/sessions", { method: id ? "PUT" : "POST", body: payload });
     $("#session-dialog").close();
-    toast(id ? "Partida actualizada" : `${game.icon} ${game.name} registrado`);
+    toast(id ? "partida actualizada" : `${game.name} registrado`);
     refresh();
   } catch (err) {
     showFormError(sessionForm, err.message);
@@ -1099,11 +1357,11 @@ sessionForm.addEventListener("submit", async (e) => {
 });
 
 async function deleteSession(id) {
-  const ok = await confirmDialog("Eliminar partida", "Esta partida se eliminará definitivamente.");
+  const ok = await confirmDialog("rm partida", "Esta partida se eliminará definitivamente.");
   if (!ok) return false;
   try {
     await api(`/api/sessions/${id}`, { method: "DELETE" });
-    toast("Partida eliminada");
+    toast("partida eliminada");
     refresh();
     return true;
   } catch (err) {
@@ -1130,6 +1388,7 @@ document.addEventListener("click", async (e) => {
     else if ("log" in d) await openSessionForm({ gameId: d.log ? Number(d.log) : null, date: d.logDate || null });
     else if (d.editSession) await openSessionForm({ session: await api(`/api/sessions/${d.editSession}`) });
     else if (d.deleteSession) await deleteSession(d.deleteSession);
+    else if ("spinLink" in d) state.roulette.autoSpin = true;
     else if (d.toggleGame) {
       const g = gameById(d.toggleGame);
       await api(`/api/games/${g.id}`, { method: "PUT", body: { active: !g.active } });
@@ -1138,8 +1397,8 @@ document.addEventListener("click", async (e) => {
     } else if (d.deleteGame) {
       const g = gameById(d.deleteGame);
       const ok = await confirmDialog(
-        `Eliminar ${g.name}`,
-        `Se eliminará «${g.name}» y TODAS sus partidas registradas. Esta acción no se puede deshacer. Si solo quieres ocultarlo, usa «Desactivar».`,
+        `rm -rf ${slug(g.name)}`,
+        `Se eliminará «${g.name}» y TODAS sus partidas. No se puede deshacer. Si solo quieres ocultarlo, usa «desactivar».`,
       );
       if (!ok) return;
       await api(`/api/games/${g.id}`, { method: "DELETE" });
@@ -1171,12 +1430,31 @@ document.addEventListener("click", async (e) => {
   }
 });
 
-// Redibuja los gráficos si cambia el tema del sistema.
-window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-  if (state.charts.length) refresh();
+/* Atajos de teclado: 1-7 navegan, r gira la ruleta, n registra partida. */
+document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+  if (document.querySelector("dialog[open]")) return;
+  if (e.target.closest("input, select, textarea, [contenteditable]")) return;
+  const n = Number(e.key);
+  if (n >= 1 && n <= NAV_ORDER.length) {
+    location.hash = `#/${NAV_ORDER[n - 1]}`;
+  } else if (e.key === "r") {
+    if (state.route === "roulette") spinRoulette();
+    else { state.roulette.autoSpin = true; location.hash = "#/roulette"; }
+  } else if (e.key === "n") {
+    openSessionForm().catch((err) => toast(err.message, "error"));
+  } else {
+    return;
+  }
+  e.preventDefault();
 });
-const themeObserver = new MutationObserver(() => { if (state.charts.length) refresh(); });
-themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
+// Redibuja los gráficos si cambia el tema.
+const redrawIfCharts = () => { if (state.charts.length) refresh(); };
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", redrawIfCharts);
+new MutationObserver(redrawIfCharts).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+Mascot.mountAll(document.querySelector(".sidebar"));
+updateStatusBar();
 if (!location.hash) history.replaceState(null, "", "#/dashboard");
 router();
