@@ -210,3 +210,17 @@ test("estadísticas y rachas desde el store", () => {
   rejects(() => call("GET", "/api/calendar?year=2026&month=13"), 422);
   rejects(() => call("GET", "/api/nada"), 404);
 });
+
+test("favoritos: por defecto no, se guardan y se exportan", () => {
+  const { call, storage } = setup();
+  const g = call("POST", "/api/games", { name: "Wordle" });
+  assert.equal(g.favorite, false);
+  assert.equal(call("PUT", `/api/games/${g.id}`, { favorite: true }).favorite, true);
+  rejects(() => call("PUT", `/api/games/${g.id}`, { favorite: "si" }), 422);
+  assert.equal(call("GET", "/api/export").games[0].favorite, true);
+  // Datos de una versión anterior sin el campo.
+  const raw = JSON.parse(storage.getItem(DleStore.STORAGE_KEY));
+  delete raw.games[0].favorite;
+  storage.setItem(DleStore.STORAGE_KEY, JSON.stringify(raw));
+  assert.equal(setup({ storage }).call("GET", "/api/games")[0].favorite, false);
+});

@@ -7,13 +7,26 @@
   <meta name="description" content="Registra tus juegos diarios tipo Wordle: rachas, estadísticas y ruleta. Los datos se guardan en tu navegador.">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%230b0f0b'/><text x='2' y='12' font-family='monospace' font-size='11' fill='%234af626'>&gt;_</text></svg>">
   <script>
-    // Aplica tema y efectos antes de pintar para evitar parpadeo.
+    // Aplica tema, color y efectos antes de pintar para evitar parpadeo.
     try {
+      const root = document.documentElement;
       const t = localStorage.getItem("dle-theme");
-      if (t) document.documentElement.dataset.theme = t;
-      if (localStorage.getItem("dle-crt") === "off") document.documentElement.dataset.crt = "off";
+      if (t) root.dataset.theme = t;
+      if (localStorage.getItem("dle-crt") === "off") root.dataset.crt = "off";
+      if (localStorage.getItem("dle-bit") === "off") root.dataset.bit = "off";
+      if (localStorage.getItem("dle-density") === "compact") root.dataset.density = "compact";
+      const accent = localStorage.getItem("dle-accent");
+      if (/^#[0-9a-f]{6}$/i.test(accent || "")) {
+        const n = parseInt(accent.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+        root.style.setProperty("--accent", accent);
+        root.style.setProperty("--glow", `rgba(${r}, ${g}, ${b}, 0.35)`);
+        root.style.setProperty("--accent-ink", (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? "#050805" : "#ffffff");
+      }
     } catch (e) {}
   </script>
+  <meta name="theme-color" content="#070b07">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="static/icons/icon-192.png">
   <link rel="stylesheet" href="static/css/styles.css">
 </head>
 <body>
@@ -33,12 +46,13 @@
         <div class="nav-group muted small">~/</div>
         <a class="nav-link" href="#/dashboard" data-route="dashboard"><kbd>1</kbd><span>dashboard</span></a>
         <a class="nav-link" href="#/games" data-route="games"><kbd>2</kbd><span>juegos</span></a>
-        <a class="nav-link" href="#/roulette" data-route="roulette"><kbd>3</kbd><span>ruleta</span></a>
-        <a class="nav-link" href="#/history" data-route="history"><kbd>4</kbd><span>historial</span></a>
-        <a class="nav-link" href="#/stats" data-route="stats"><kbd>5</kbd><span>stats</span></a>
-        <a class="nav-link" href="#/calendar" data-route="calendar"><kbd>6</kbd><span>calendario</span></a>
-        <a class="nav-link nav-settings" href="#/settings" data-route="settings"><kbd>7</kbd><span>config</span></a>
-        <p class="nav-help muted small">[n] nueva partida<br>[r] girar ruleta</p>
+        <a class="nav-link" href="#/discover" data-route="discover"><kbd>3</kbd><span>descubrir</span></a>
+        <a class="nav-link" href="#/roulette" data-route="roulette"><kbd>4</kbd><span>ruleta</span></a>
+        <a class="nav-link" href="#/history" data-route="history"><kbd>5</kbd><span>historial</span></a>
+        <a class="nav-link" href="#/stats" data-route="stats"><kbd>6</kbd><span>stats</span></a>
+        <a class="nav-link" href="#/calendar" data-route="calendar"><kbd>7</kbd><span>calendario</span></a>
+        <a class="nav-link nav-settings" href="#/settings" data-route="settings"><kbd>8</kbd><span>config</span></a>
+        <p class="nav-help muted small">[n] nueva partida<br>[r] girar ruleta<br>[/] buscar juegos</p>
       </nav>
 
       <main id="view" class="content" tabindex="-1" aria-live="polite"></main>
@@ -49,11 +63,12 @@
       <nav class="sb-tabs" aria-label="Navegación">
         <a href="#/dashboard" data-route="dashboard">0:inicio</a>
         <a href="#/games" data-route="games">1:juegos</a>
-        <a href="#/roulette" data-route="roulette">2:ruleta</a>
-        <a href="#/history" data-route="history">3:hist</a>
-        <a href="#/stats" data-route="stats">4:stats</a>
-        <a href="#/calendar" data-route="calendar">5:cal</a>
-        <a href="#/settings" data-route="settings">6:cfg</a>
+        <a href="#/discover" data-route="discover">2:+juegos</a>
+        <a href="#/roulette" data-route="roulette">3:ruleta</a>
+        <a href="#/history" data-route="history">4:hist</a>
+        <a href="#/stats" data-route="stats">5:stats</a>
+        <a href="#/calendar" data-route="calendar">6:cal</a>
+        <a href="#/settings" data-route="settings">7:cfg</a>
       </nav>
       <span class="sb-right" id="status-right"></span>
     </footer>
@@ -125,6 +140,11 @@
       <label class="field">fecha
         <input name="played_at" type="date" required>
       </label>
+      <details class="paste" id="paste-details">
+        <summary>📋 pegar resultado compartido</summary>
+        <textarea id="share-input" rows="3" placeholder="Pega aquí el texto que copia el juego al compartir (p. ej. «Wordle 1.234 4/6» con su cuadrícula)"></textarea>
+        <p class="muted small" id="share-detected" aria-live="polite"></p>
+      </details>
       <div class="field">
         <span class="field-label">resultado</span>
         <div class="segmented" role="radiogroup" aria-label="Resultado">
@@ -163,6 +183,7 @@
   <script src="static/vendor/chart.umd.min.js"></script>
   <script src="static/js/logic.js"></script>
   <script src="static/js/store.js"></script>
+  <script src="static/js/catalog.js"></script>
   <script src="static/js/mascot.js"></script>
   <script src="static/js/app.js"></script>
 </body>

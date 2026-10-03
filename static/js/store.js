@@ -112,7 +112,7 @@
   }
 
   const GAME_DEFAULTS = {
-    name: "", description: "", url: null, category: "", icon: "🎮", active: true,
+    name: "", description: "", url: null, category: "", icon: "🎮", active: true, favorite: false,
     track_attempts: true, track_score: false, track_time: false, track_errors: false,
     primary_metric: "attempts", lower_is_better: true,
   };
@@ -125,7 +125,7 @@
     if ("category" in changes) game.category = cleanText(changes.category, "Categoría", 50);
     if ("icon" in changes) game.icon = cleanText(changes.icon, "Icono", 16) || "🎮";
     if ("url" in changes) game.url = cleanUrl(changes.url);
-    for (const key of ["active", "track_attempts", "track_score", "track_time", "track_errors", "lower_is_better"]) {
+    for (const key of ["active", "favorite", "track_attempts", "track_score", "track_time", "track_errors", "lower_is_better"]) {
       if (key in changes && changes[key] !== null) game[key] = cleanBool(changes[key], key);
     }
     if ("primary_metric" in changes && changes.primary_metric !== null) {
@@ -189,7 +189,11 @@
       if (raw) {
         try {
           const parsed = JSON.parse(raw);
-          if (parsed && Array.isArray(parsed.games) && Array.isArray(parsed.sessions)) return parsed;
+          if (parsed && Array.isArray(parsed.games) && Array.isArray(parsed.sessions)) {
+            // Campos añadidos en versiones posteriores.
+            for (const g of parsed.games) g.favorite = g.favorite === true;
+            return parsed;
+          }
         } catch {
           /* datos corruptos: se empieza de cero sin pisar lo guardado hasta el primer cambio */
         }

@@ -15,10 +15,16 @@ const RESULT_LABEL = { win: "victoria", loss: "derrota" };
 const MONTHS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
   "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 const ROUTE_PATH = {
-  dashboard: "~", games: "~/juegos", game: "~/juegos", roulette: "~/ruleta",
+  dashboard: "~", games: "~/juegos", game: "~/juegos", discover: "~/descubrir", roulette: "~/ruleta",
   history: "~/historial", stats: "~/stats", calendar: "~/calendario", settings: "~/.config",
 };
-const NAV_ORDER = ["dashboard", "games", "roulette", "history", "stats", "calendar", "settings"];
+const NAV_ORDER = ["dashboard", "games", "discover", "roulette", "history", "stats", "calendar", "settings"];
+const SORTS = {
+  pending: "pendientes primero",
+  favorites: "favoritos primero",
+  name: "nombre",
+  streak: "racha más larga",
+};
 const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 const state = {
@@ -30,6 +36,7 @@ const state = {
   history: { game_id: "", result: "", date_from: "", date_to: "", order: "desc" },
   calendar: null, // {year, month, selected}
   roulette: { onlyPending: true, rotation: 0, spinning: false, autoSpin: false, log: [], result: null },
+  discover: { q: "", cat: "", hideAdded: true, limit: 48, suggestion: null, catalog: null, focus: false },
 };
 
 function localISO(d) {
@@ -427,6 +434,7 @@ const routes = {
   dashboard: renderDashboard,
   games: renderGames,
   game: renderGame,
+  discover: renderDiscover,
   roulette: renderRoulette,
   history: renderHistory,
   stats: renderStats,
@@ -486,11 +494,19 @@ function mascotState(o) {
   return { mood: "idle", text: `Vas ${o.played_today}/${o.total_games}. Quedan ${pending}; si dudas, la ruleta elige por ti [r].` };
 }
 
+function favButton(game) {
+  return `<button class="star ${game.favorite ? "on" : ""}" data-fav="${game.id}" aria-pressed="${game.favorite}"
+    title="${game.favorite ? "Quitar de favoritos" : "Marcar como favorito"}">${game.favorite ? "★" : "☆"}</button>`;
+}
+
 function gameCard(game, card) {
   const last = card?.last_session;
   const status = card?.played_today ? resultTag(last.result) : '<span class="tag pending">[PEND]</span> pendiente';
   const rows = [["estado", status]];
-  if (last) {
+  const compact = readPref("dle-density", "") === "compact";
+  if (compact) {
+    // En modo compacto solo estado y racha.
+  } else if (last) {
     rows.push(["última", fmtDate(last.played_at)]);
     const summary = sessionSummary(game, last);
     if (summary) rows.push(["datos", esc(summary)]);
@@ -507,7 +523,7 @@ function gameCard(game, card) {
       <button class="btn primary" data-log="${game.id}">${card?.played_today ? "editar" : "+ registrar"}</button>
     </div>`;
   const title = `${gicon(game)} <a href="#/game/${game.id}">${esc(slug(game.name))}</a>`;
-  return pane(title, body, { cls: `game-card ${card?.played_today ? "done" : ""}`, tag: "article" });
+  return pane(title, body, { cls: `game-card ${card?.played_today ? "done" : ""}`, tag: "article", aside: favButton(game) });
 }
 
 function weekPane(week, { title = "semana", metricKey = "attempts", lowerBetter = true } = {}) {
@@ -545,8 +561,8 @@ function achievementsPane(list) {
 async function renderDashboard() {
   const o = await loadOverview();
   const cards = Object.fromEntries(o.games.map((c) => [c.game_id, c]));
-  const active = state.games.filter((g) => g.active);
-  active.sort((a, b) => (cards[a.id]?.played_today - cards[b.id]?.played_today) || a.name.localeCompare(b.name));
+  const active = sortGames(state.games.filter((g) => g.active), cards);
+  const nextPending = active.find((g) => !cards[g.id]?.played_today && g.url);
   const dateLabel = parseISO(o.today).toLocaleDateString("es", { weekday: "long", day: "numeric", month: "long" });
   const { mood, text } = mascotState(o);
   const swatches = ["--accent", "--win", "--streak", "--loss", "--info", "--text-2", "--line-2", "--muted"]
@@ -578,22 +594,258 @@ async function renderDashboard() {
     ${pageHead({
       cmd: "dlefetch",
       title: "dashboard",
-      actions: `<a class="btn" href="#/roulette" data-spin-link>🎲 ruleta</a><button class="btn primary" data-new-game>+ juego</button>`,
+      actions: `
+        ${nextPending ? `<a class="btn primary" href="${esc(nextPending.url)}" target="_blank" rel="noopener noreferrer"
+          title="Abrir ${esc(nextPending.name)}">▶ siguiente: ${esc(nextPending.name)}</a>` : ""}
+        <a class="btn" href="#/roulette" data-spin-link>🎲 ruleta</a>
+        <button class="btn" data-share-day title="Copiar el resumen de hoy">⧉ compartir día</button>
+        <button class="btn" data-new-game>+ juego</button>`,
     })}
     ${pane("sistema", fetch)}
     <section class="section">
       <div class="section-head">
-        <div class="prompt"><span class="u">$</span> <span class="cmd">ls juegos/ --sort=pendientes</span></div>
-        <span class="muted small">${o.pending_today.length ? `${o.pending_today.length} pendiente(s)` : "todo jugado ✓"}</span>
+        <div class="prompt"><span class="u">$</span> <span class="cmd">ls juegos/ --sort=${esc(readPref("dle-sort", "pending"))}</span></div>
+        <span class="card-actions">
+          <span class="muted small">${o.pending_today.length ? `${o.pending_today.length} pendiente(s)` : "todo jugado ✓"}</span>
+          <select id="sort-select" class="inline-select" aria-label="Ordenar juegos">
+            ${Object.entries(SORTS).map(([k, label]) => `<option value="${k}" ${readPref("dle-sort", "pending") === k ? "selected" : ""}>${label}</option>`).join("")}
+          </select>
+        </span>
       </div>
       ${active.length
         ? `<div class="game-grid">${active.map((g) => gameCard(g, cards[g.id])).join("")}</div>`
-        : pane("", '<p class="empty">no hay juegos activos <button class="btn primary" data-new-game>+ juego</button></p>')}
+        : pane("", '<p class="empty">no hay juegos activos <a class="btn primary" href="#/discover">descubrir juegos</a></p>')}
     </section>
     <section class="section grid-2">
       ${weekPane(o.week, { title: "esta semana" })}
       ${achievementsPane(o.achievements)}
     </section>`;
+}
+
+/** Ordena las tarjetas según la preferencia del dashboard. */
+function sortGames(games, cards) {
+  const mode = readPref("dle-sort", "pending");
+  const byName = (a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" });
+  const pending = (g) => (cards[g.id]?.played_today ? 1 : 0);
+  const fav = (g) => (g.favorite ? 0 : 1);
+  const cmp = {
+    pending: (a, b) => pending(a) - pending(b) || fav(a) - fav(b) || byName(a, b),
+    favorites: (a, b) => fav(a) - fav(b) || pending(a) - pending(b) || byName(a, b),
+    name: byName,
+    streak: (a, b) => (cards[b.id]?.current_streak || 0) - (cards[a.id]?.current_streak || 0) || byName(a, b),
+  }[mode] || byName;
+  return [...games].sort(cmp);
+}
+
+afterRender.dashboard = () => {
+  $("#sort-select")?.addEventListener("change", (e) => {
+    writePref("dle-sort", e.target.value);
+    refresh();
+  });
+};
+
+/** Texto para compartir cómo te fue hoy. */
+function daySummaryText() {
+  const o = state.overview;
+  const cards = Object.fromEntries(o.games.map((c) => [c.game_id, c]));
+  const active = sortGames(state.games.filter((g) => g.active), cards);
+  const date = parseISO(o.today).toLocaleDateString("es", { weekday: "long", day: "numeric", month: "long" });
+  const lines = active.map((g) => {
+    const c = cards[g.id];
+    if (!c?.played_today) return `⏳ ${g.name}`;
+    const s = c.last_session;
+    const detail = sessionSummary(g, s);
+    return `${s.result === "win" ? "✅" : "❌"} ${g.name}${detail ? ` — ${detail}` : ""}`;
+  });
+  return [`dle_tracker · ${date}`, ...lines, "",
+    `${o.played_today}/${o.total_games} jugados · 🔥 ${o.current_streak} día(s) de racha`].join("\n");
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.append(area);
+    area.select();
+    const ok = document.execCommand("copy");
+    area.remove();
+    return ok;
+  }
+}
+
+/* ================================================================ descubrir */
+
+function catalogAddedIndex() {
+  const keys = new Map();
+  for (const g of state.games) {
+    keys.set(`u:${DleCatalog.urlKey(g.url || "")}`, g);
+    keys.set(`n:${g.name.toLowerCase()}`, g);
+  }
+  return (entry) => keys.get(`u:${DleCatalog.urlKey(entry.url)}`) || keys.get(`n:${entry.name.toLowerCase()}`) || null;
+}
+
+function catalogCard(entry, added, { highlight = false, badge = "" } = {}) {
+  const cat = DleCatalog.categoryInfo(entry.category);
+  const pseudo = { icon: cat.icon, url: entry.url, icon_url: DleStore.iconCandidates(entry.url)[0] || null };
+  const actions = added
+    ? `<a class="btn" href="#/game/${added.id}">✓ en tus juegos</a>`
+    : `<button class="btn primary" data-add-catalog="${entry.id}">+ agregar</button>`;
+  const body = `
+    <p class="dim small cat-desc">${esc(entry.description)}</p>
+    <div class="cat-meta"><span class="tag cat">#${esc(slug(cat.label))}</span>${entry.themes.map((t) => `<span class="muted small">${esc(t.toLowerCase())}</span>`).join(" ")}${badge}</div>
+    <div class="card-actions">
+      <a class="btn" href="${esc(entry.url)}" target="_blank" rel="noopener noreferrer">▶ probar</a>
+      ${actions}
+    </div>`;
+  return pane(`${gicon(pseudo)} ${esc(entry.name)}`, body, { cls: `cat-card ${highlight ? "highlight" : ""} ${added ? "added" : ""}`, tag: "article" });
+}
+
+function filteredCatalog() {
+  const d = state.discover;
+  const isAdded = catalogAddedIndex();
+  const q = d.q.trim().toLowerCase();
+  return d.catalog.games.filter((g) =>
+    (!d.cat || g.category === d.cat)
+    && (!d.hideAdded || !isAdded(g))
+    && (!q || g.name.toLowerCase().includes(q) || g.description.toLowerCase().includes(q)
+      || g.themes.some((t) => t.toLowerCase().includes(q))));
+}
+
+function discoverResultsHtml() {
+  const d = state.discover;
+  const isAdded = catalogAddedIndex();
+  const list = filteredCatalog();
+  const shown = list.slice(0, d.limit);
+  const suggestion = d.suggestion && d.catalog.games.find((g) => g.id === d.suggestion);
+  return `
+    ${suggestion ? `<div class="suggestion">
+        <div class="speech"><span>¿Qué tal <b>${esc(suggestion.name)}</b>? ${esc(DleCatalog.categoryInfo(suggestion.category).label)}, y no lo tienes todavía.</span></div>
+        ${catalogCard(suggestion, isAdded(suggestion), { highlight: true })}
+      </div>` : ""}
+    <p class="muted small">${list.length} resultado(s)${d.q ? ` para «${esc(d.q)}»` : ""}</p>
+    ${shown.length ? `<div class="game-grid">${shown.map((g) => catalogCard(g, isAdded(g))).join("")}</div>` : '<p class="empty">nada por aquí: prueba otra búsqueda o categoría</p>'}
+    ${list.length > shown.length ? `<div class="more"><button class="btn" data-more>ver ${Math.min(48, list.length - shown.length)} más</button></div>` : ""}`;
+}
+
+async function renderDiscover() {
+  const d = state.discover;
+  let notice = "";
+  try {
+    d.catalog = await DleCatalog.load(STORAGE);
+    if (d.catalog.from === "stale") notice = '<p class="muted small">sin conexión: mostrando el catálogo guardado</p>';
+  } catch (err) {
+    if (!d.catalog) {
+      return `${pageHead({ cmd: "apt update", title: "descubrir" })}
+        ${pane("error", `<p class="c-loss">${esc(err.message)}</p><button class="btn primary" data-catalog-refresh>↻ reintentar</button>`)}`;
+    }
+  }
+  const c = d.catalog;
+  const isAdded = catalogAddedIndex();
+  const byId = new Map(c.games.map((g) => [g.id, g]));
+  const counts = {};
+  for (const g of c.games) counts[g.category] = (counts[g.category] || 0) + 1;
+  const chips = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([key, n]) => {
+    const cat = DleCatalog.categoryInfo(key);
+    return `<label><input type="radio" name="cat" value="${esc(key)}" ${d.cat === key ? "checked" : ""}><span>${cat.icon} ${esc(cat.label.toLowerCase())} <span class="muted">${n}</span></span></label>`;
+  }).join("");
+  const weekly = (c.weekly?.ids || []).map((id) => byId.get(id)).filter(Boolean);
+  const fresh = c.fresh.slice(0, 6).map((f) => [byId.get(f.id), f.date_added]).filter(([g]) => g);
+  const updated = new Date(c.fetched_at).toLocaleDateString("es", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+
+  return `
+    ${pageHead({
+      cmd: "apt search dle",
+      title: "descubrir",
+      sub: `${c.games.length} juegos diarios del catálogo de <a href="${DleCatalog.SITE}" target="_blank" rel="noopener">dles.aukspot.com</a>`,
+      actions: `<button class="btn primary" data-surprise>🎲 sorpréndeme</button>
+        <button class="btn" data-catalog-refresh title="Actualizado: ${esc(updated)}">↻ actualizar</button>`,
+    })}
+    ${notice}
+    ${weekly.length ? `<section class="section">
+      <div class="section-head"><div class="prompt"><span class="u">$</span> <span class="cmd">cat destacados_de_la_semana</span></div>
+        <span class="muted small">semana del ${fmtDate(c.weekly.date, { relative: false })}</span></div>
+      <div class="game-grid">${weekly.map((g) => catalogCard(g, isAdded(g), { badge: '<span class="tag streak">★ destacado</span>' })).join("")}</div>
+    </section>` : ""}
+    ${fresh.length ? `<section class="section">
+      <div class="section-head"><div class="prompt"><span class="u">$</span> <span class="cmd">ls -t nuevos/ | head</span></div></div>
+      <div class="game-grid">${fresh.map(([g, date]) => catalogCard(g, isAdded(g), { badge: `<span class="tag info">nuevo · ${fmtDate(date, { relative: false })}</span>` })).join("")}</div>
+    </section>` : ""}
+    <section class="section">
+      <div class="section-head"><div class="prompt"><span class="u">$</span> <span class="cmd" id="grep-cmd">grep -i "${esc(d.q)}" catalogo.json</span></div></div>
+      <div class="discover-filters">
+        <label class="field search-field">buscar <kbd>/</kbd>
+          <input type="search" id="discover-q" value="${esc(d.q)}" placeholder="nombre, tema o descripción (en inglés)…" autocomplete="off">
+        </label>
+        <label class="check"><input type="checkbox" id="hide-added" ${d.hideAdded ? "checked" : ""}> ocultar los que ya tengo</label>
+      </div>
+      <div class="segmented chips-row" id="cat-chips" role="radiogroup" aria-label="Categoría">
+        <label><input type="radio" name="cat" value="" ${d.cat ? "" : "checked"}><span>todas <span class="muted">${c.games.length}</span></span></label>
+        ${chips}
+      </div>
+      <div id="discover-results">${discoverResultsHtml()}</div>
+    </section>
+    <p class="muted small credit">Catálogo: <a href="${DleCatalog.SITE}" target="_blank" rel="noopener">dles.aukspot.com</a>
+      (<a href="https://github.com/aukspot/dles" target="_blank" rel="noopener">código y datos GPL-3.0</a>), descargado desde GitHub y guardado en tu navegador.</p>`;
+}
+
+function refreshDiscoverResults() {
+  const box = $("#discover-results");
+  if (!box) return;
+  box.innerHTML = discoverResultsHtml();
+  $("#grep-cmd").textContent = `grep -i "${state.discover.q}" catalogo.json`;
+}
+
+afterRender.discover = () => {
+  const d = state.discover;
+  const q = $("#discover-q");
+  if (!q) return;
+  let timer;
+  q.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      d.q = q.value;
+      d.limit = 48;
+      d.suggestion = null;
+      refreshDiscoverResults();
+    }, 120);
+  });
+  $("#hide-added").addEventListener("change", (e) => {
+    d.hideAdded = e.target.checked;
+    refreshDiscoverResults();
+  });
+  $("#cat-chips").addEventListener("change", (e) => {
+    d.cat = e.target.value;
+    d.limit = 48;
+    d.suggestion = null;
+    refreshDiscoverResults();
+  });
+  if (d.focus) {
+    d.focus = false;
+    q.focus();
+    q.select();
+  }
+};
+
+async function addFromCatalog(id, button) {
+  const entry = state.discover.catalog?.games.find((g) => g.id === Number(id));
+  if (!entry) return;
+  button.disabled = true;
+  try {
+    const game = await api("/api/games", { method: "POST", body: DleCatalog.toGame(entry) });
+    state.games.push(game);
+    toast(`${game.name} agregado a tus juegos`);
+    const card = button.closest(".cat-card");
+    card.classList.add("added");
+    button.outerHTML = `<a class="btn" href="#/game/${game.id}">✓ en tus juegos</a>`;
+  } catch (err) {
+    button.disabled = false;
+    toast(err.message, "error");
+  }
 }
 
 /* ================================================================ mis juegos */
@@ -941,6 +1193,8 @@ async function renderStats() {
   const perGame = await Promise.all(withData.map((g) => api(`/api/stats/${g.id}`)));
   const since = addDays(state.today, -29);
   const recent = await api(`/api/sessions?date_from=${since}&order=asc`);
+  const yearAgo = addDays(state.today, -370);
+  const yearSessions = await api(`/api/sessions?date_from=${yearAgo}&order=asc`);
   state.statsData = { o, perGame, recent, since };
 
   const rows = perGame.map((s) => {
@@ -977,6 +1231,9 @@ async function renderStats() {
       ${pane("victorias / derrotas", `<div class="chart-box short"><canvas id="winloss-chart"></canvas></div>${winBar}`)}
     </div>
     <section class="section">
+      ${pane("actividad · último año", heatmapHtml(yearSessions), { aside: `<span class="muted">${new Set(yearSessions.map((s) => s.played_at)).size} día(s) jugados</span>` })}
+    </section>
+    <section class="section">
       ${pane("evolución por juego", `
         ${perGame.length ? `<label class="field" style="max-width:260px">juego<select id="stats-game">${perGame.map((s) => {
           const g = gameById(s.game_id);
@@ -992,6 +1249,36 @@ async function renderStats() {
           <th class="num">racha</th><th class="num">máx.</th><th>tend.</th>
         </tr></thead><tbody>${rows}</tbody></table>` : '<p class="empty">registra partidas para ver estadísticas</p>'}</div>`)}
     </section>`;
+}
+
+/** Mapa de actividad estilo GitHub: una columna por semana, lunes arriba. */
+function heatmapHtml(sessions) {
+  const counts = {};
+  for (const s of sessions) counts[s.played_at] = (counts[s.played_at] || 0) + 1;
+  const today = state.today;
+  const weekdayIdx = (parseISO(today).getDay() + 6) % 7;
+  const start = addDays(today, -(52 * 7 + weekdayIdx)); // lunes de hace 52 semanas
+  const max = Math.max(1, ...Object.values(counts));
+  const cells = [];
+  const months = [];
+  let lastMonth = -1;
+  for (let i = 0; ; i++) {
+    const day = addDays(start, i);
+    if (day > today) break;
+    const n = counts[day] || 0;
+    const level = n === 0 ? 0 : Math.min(4, Math.ceil((n / max) * 4));
+    const d = parseISO(day);
+    if (i % 7 === 0 && d.getMonth() !== lastMonth && d.getDate() <= 7) {
+      months.push(`<span style="grid-column:${i / 7 + 1}">${MONTHS[d.getMonth()].slice(0, 3)}</span>`);
+      lastMonth = d.getMonth();
+    }
+    cells.push(`<i class="l${level}" title="${fmtDate(day, { relative: false })}: ${n ? `${n} partida(s)` : "sin partidas"}"></i>`);
+  }
+  return `<div class="heatmap-wrap">
+      <div class="heatmap-months">${months.join("")}</div>
+      <div class="heatmap" role="img" aria-label="Partidas por día durante el último año">${cells.join("")}</div>
+    </div>
+    <p class="muted small heat-legend">menos <i class="l0"></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i> más</p>`;
 }
 
 afterRender.stats = () => {
@@ -1123,6 +1410,28 @@ function writePref(key, value) {
   } catch { /* almacenamiento no disponible */ }
 }
 
+const ACCENTS = [
+  ["#4af626", "verde fósforo"], ["#5fd7ff", "cian"], ["#ffb000", "ámbar"], ["#ff5fd7", "magenta"],
+  ["#ff5f56", "rojo"], ["#b18cff", "violeta"], ["#ffffff", "blanco"], ["#0d7a28", "verde bosque"],
+];
+
+/** Color de acento personalizado (vacío = el del tema). */
+function setAccent(hex) {
+  const root = document.documentElement.style;
+  if (/^#[0-9a-f]{6}$/i.test(hex || "")) {
+    const n = parseInt(hex.slice(1), 16);
+    const [r, g, b] = [n >> 16, (n >> 8) & 255, n & 255];
+    root.setProperty("--accent", hex);
+    root.setProperty("--glow", `rgba(${r}, ${g}, ${b}, 0.35)`);
+    root.setProperty("--accent-ink", 0.299 * r + 0.587 * g + 0.114 * b > 150 ? "#050805" : "#ffffff");
+    writePref("dle-accent", hex);
+  } else {
+    for (const p of ["--accent", "--glow", "--accent-ink"]) root.removeProperty(p);
+    writePref("dle-accent", null);
+  }
+  refresh();
+}
+
 function applyTheme(theme) {
   writePref("dle-theme", theme === "system" ? null : theme);
   if (theme === "system") delete document.documentElement.dataset.theme;
@@ -1132,6 +1441,9 @@ function applyTheme(theme) {
 async function renderSettings() {
   const theme = readPref("dle-theme", "system");
   const crt = readPref("dle-crt", "on");
+  const bit = readPref("dle-bit", "on");
+  const density = readPref("dle-density", "normal");
+  const accent = readPref("dle-accent", "");
   const opt = (name, value, label, current) =>
     `<label><input type="radio" name="${name}" value="${value}" ${current === value ? "checked" : ""}><span>${label}</span></label>`;
   return `
@@ -1144,9 +1456,22 @@ async function renderSettings() {
             ${opt("theme", "amber", "amber", theme)}${opt("theme", "paper", "paper (claro)", theme)}
           </div>
           <p class="muted small">«sistema» usa phosphor en modo oscuro y paper en modo claro.</p>`)}
+        ${pane("color de acento", `
+          <div class="swatch-picker" id="accent-picker">
+            ${ACCENTS.map(([hex, name]) => `<button type="button" class="swatch ${accent === hex ? "on" : ""}" data-accent="${hex}"
+              style="--sw:${hex}" title="${name}" aria-label="${name}"></button>`).join("")}
+            <label class="swatch custom" title="Elegir otro color"><input type="color" id="accent-custom" value="${accent || "#4af626"}"></label>
+          </div>
+          <div class="card-actions" style="margin-top:10px"><button class="btn" data-accent="">restablecer (según el tema)</button></div>`)}
         ${pane("efectos", `
           <div class="segmented" id="crt-picker">
             ${opt("crt", "on", "scanlines on", crt)}${opt("crt", "off", "scanlines off", crt)}
+          </div>
+          <div class="segmented" id="bit-picker" style="margin-top:8px">
+            ${opt("bit", "on", "mostrar a Bit", bit)}${opt("bit", "off", "ocultar a Bit", bit)}
+          </div>
+          <div class="segmented" id="density-picker" style="margin-top:8px">
+            ${opt("density", "normal", "tarjetas completas", density)}${opt("density", "compact", "tarjetas compactas", density)}
           </div>`)}
       </div>
       <div class="stack">
@@ -1167,7 +1492,8 @@ async function renderSettings() {
           <p class="dim small">Borra todos los juegos y partidas de este navegador y vuelve a los juegos de ejemplo.</p>
           <button class="btn danger" id="reset-btn">rm -rf ~/.dle</button>`)}
         ${pane("atajos", kv([
-          ["1-7", "navegar entre secciones"],
+          ["1-8", "navegar entre secciones"],
+          ["/", "buscar juegos nuevos"],
           ["r", "girar la ruleta"],
           ["n", "registrar partida"],
           ["esc", "cerrar ventana"],
@@ -1178,6 +1504,22 @@ async function renderSettings() {
 
 afterRender.settings = () => {
   $("#theme-picker").addEventListener("change", (e) => applyTheme(e.target.value));
+  $("#accent-picker").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-accent]");
+    if (b) setAccent(b.dataset.accent);
+  });
+  $("#accent-custom").addEventListener("change", (e) => setAccent(e.target.value));
+  $("[data-accent='']")?.addEventListener("click", () => setAccent(""));
+  $("#bit-picker").addEventListener("change", (e) => {
+    writePref("dle-bit", e.target.value === "off" ? "off" : null);
+    if (e.target.value === "off") document.documentElement.dataset.bit = "off";
+    else delete document.documentElement.dataset.bit;
+  });
+  $("#density-picker").addEventListener("change", (e) => {
+    writePref("dle-density", e.target.value === "compact" ? "compact" : null);
+    if (e.target.value === "compact") document.documentElement.dataset.density = "compact";
+    else delete document.documentElement.dataset.density;
+  });
   $("#crt-picker").addEventListener("change", (e) => {
     writePref("dle-crt", e.target.value === "off" ? "off" : null);
     if (e.target.value === "off") document.documentElement.dataset.crt = "off";
@@ -1405,6 +1747,9 @@ async function openSessionForm({ gameId = null, session = null, date = null } = 
   el.played_at.max = state.today;
   el.notes.value = session?.notes ?? "";
   $("#notes-details").open = !!session?.notes;
+  $("#share-input").value = "";
+  $("#share-detected").textContent = "";
+  $("#paste-details").open = false;
   fillForGame(session);
   $("#session-dialog").showModal();
   const firstMetric = $("#metric-fields input");
@@ -1429,6 +1774,30 @@ function fillForGame(session = null) {
 sessionForm.addEventListener("change", (e) => {
   if (e.target.name === "game_id") fillForGame();
 });
+
+/** Rellena el formulario a partir del texto que comparte el juego. */
+function applySharedResult(text) {
+  const parsed = DleLogic.parseShare(text);
+  const el = sessionForm.elements;
+  const game = gameById(el.game_id.value);
+  const applied = [];
+  if (parsed.result) {
+    el.result.value = parsed.result;
+    applied.push(RESULT_LABEL[parsed.result]);
+  }
+  for (const metric of trackedMetrics(game)) {
+    if (parsed[metric] === undefined) continue;
+    const input = el[metric];
+    input.value = metric === "time_seconds" ? fmtTime(parsed[metric]) : parsed[metric];
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    applied.push(`${fmtMetric(metric, parsed[metric])} ${METRICS[metric].label}`);
+  }
+  $("#share-detected").textContent = text.trim()
+    ? (applied.length ? `detectado: ${applied.join(" · ")}` : "no reconocí el formato; completa los campos a mano")
+    : "";
+}
+
+$("#share-input").addEventListener("input", (e) => applySharedResult(e.target.value));
 
 sessionForm.addEventListener("click", (e) => {
   const btn = e.target.closest("[data-quick]");
@@ -1519,6 +1888,32 @@ document.addEventListener("click", async (e) => {
     else if (d.editSession) await openSessionForm({ session: await api(`/api/sessions/${d.editSession}`) });
     else if (d.deleteSession) await deleteSession(d.deleteSession);
     else if ("spinLink" in d) state.roulette.autoSpin = true;
+    else if (d.fav) {
+      const g = gameById(d.fav);
+      await api(`/api/games/${g.id}`, { method: "PUT", body: { favorite: !g.favorite } });
+      refresh();
+    } else if ("shareDay" in d) {
+      toast(await copyText(daySummaryText()) ? "resumen copiado: pégalo donde quieras" : "no se pudo copiar", "info");
+    } else if (d.addCatalog) await addFromCatalog(d.addCatalog, t);
+    else if ("more" in d) {
+      state.discover.limit += 48;
+      refreshDiscoverResults();
+    } else if ("surprise" in d) {
+      const pool = filteredCatalog().filter((g) => !catalogAddedIndex()(g));
+      const all = pool.length ? pool : state.discover.catalog.games;
+      state.discover.suggestion = all[Math.floor(Math.random() * all.length)].id;
+      refreshDiscoverResults();
+      $("#discover-results").scrollIntoView({ behavior: REDUCED_MOTION.matches ? "auto" : "smooth", block: "start" });
+    } else if ("catalogRefresh" in d) {
+      t.disabled = true;
+      try {
+        state.discover.catalog = await DleCatalog.load(STORAGE, { force: true });
+        toast(`catálogo actualizado: ${state.discover.catalog.games.length} juegos`);
+      } catch (err) {
+        toast(err.message, "error");
+      }
+      refresh();
+    }
     else if ("fetchIcons" in d) {
       t.disabled = true;
       t.textContent = "buscando…";
@@ -1571,13 +1966,20 @@ document.addEventListener("click", async (e) => {
 document.addEventListener("keydown", (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
   if (document.querySelector("dialog[open]")) return;
-  if (e.target.closest("input, select, textarea, [contenteditable]")) return;
+  // Solo se bloquean mientras se escribe (no en casillas ni botones de opción).
+  const typing = e.target.closest("select, textarea, [contenteditable]")
+    || (e.target.matches("input") && !["radio", "checkbox", "button", "submit", "range", "color"].includes(e.target.type));
+  if (typing) return;
   const n = Number(e.key);
   if (n >= 1 && n <= NAV_ORDER.length) {
     location.hash = `#/${NAV_ORDER[n - 1]}`;
   } else if (e.key === "r") {
     if (state.route === "roulette") spinRoulette();
     else { state.roulette.autoSpin = true; location.hash = "#/roulette"; }
+  } else if (e.key === "/") {
+    state.discover.focus = true;
+    if (state.route === "discover") $("#discover-q")?.focus();
+    else location.hash = "#/discover";
   } else if (e.key === "n") {
     openSessionForm().catch((err) => toast(err.message, "error"));
   } else {
@@ -1590,6 +1992,11 @@ document.addEventListener("keydown", (e) => {
 const redrawIfCharts = () => { if (state.charts.length) refresh(); };
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", redrawIfCharts);
 new MutationObserver(redrawIfCharts).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+// App instalable y sin conexión (solo en https o localhost).
+if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+}
 
 Mascot.mountAll(document.querySelector(".sidebar"));
 updateStatusBar();

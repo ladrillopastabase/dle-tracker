@@ -17,6 +17,16 @@ datos se guardan en el navegador (`localStorage`), así que funciona en
 - **Dashboard**: juegos, jugados hoy, partidas, victorias, derrotas,
   % de victorias, racha actual y mejor racha; tarjetas por juego con
   **Jugar** y **Registrar**; resumen semanal comparado con la semana anterior y logros.
+  Botón **▶ siguiente** (abre el próximo pendiente), **⧉ compartir día**
+  (copia un resumen con ✅/❌ para pegar en un chat), **★ favoritos** y orden
+  configurable (pendientes, favoritos, nombre o racha).
+- **Descubrir**: explora los ~770 juegos del catálogo de
+  [dles.aukspot.com](https://dles.aukspot.com/): búsqueda, filtros por
+  categoría, destacados de la semana, novedades, botón **🎲 sorpréndeme** y
+  **+ agregar** con un clic (ver [Catálogo](#catálogo)).
+- **Pegar resultado**: al registrar, pega el texto que comparte el juego
+  («Wordle 1.234 4/6», la cuadrícula de Connections, la fila de Framed, un
+  tiempo «1:23», «Score: 85»…) y el formulario se rellena solo.
 - **Ruleta**: si no sabes qué jugar, gírala y elige un juego al azar
   (solo los pendientes de hoy, o todos los activos).
 - **Juegos**: agregar, editar, desactivar o eliminar (con confirmación). Cada
@@ -26,12 +36,17 @@ datos se guardan en el navegador (`localStorage`), así que funciona en
 - **Página de cada juego**: rachas, promedios, mejor/peor resultado, gráfico de
   evolución con media móvil, tendencia, distribución e historial reciente.
 - **Historial**: filtros por juego, resultado y fechas; orden; editar y eliminar.
-- **Estadísticas**: partidas por día, victorias/derrotas, evolución por juego y tabla comparativa.
+- **Estadísticas**: partidas por día, victorias/derrotas, **mapa de actividad
+  del último año** (estilo GitHub), evolución por juego y tabla comparativa.
 - **Calendario**: días jugados del mes; al elegir un día se ven sus partidas.
-- **Configuración**: temas *phosphor*, *amber* y *paper* (claro) o según el
-  sistema; scanlines; nombre del prompt; **exportar / importar JSON**; borrar todo.
-- **Atajos de teclado**: `1`–`7` navegan, `r` gira la ruleta, `n` registra una partida, `Esc` cierra.
-- Responsive y funciona sin conexión una vez cargada (Chart.js y la fuente van incluidos).
+- **Personalización**: temas *phosphor*, *amber* y *paper* (claro) o según el
+  sistema; **color de acento** (8 predefinidos o cualquiera); scanlines;
+  mostrar u ocultar a Bit; tarjetas completas o compactas; nombre del prompt.
+- **Datos**: exportar / importar JSON y borrar todo.
+- **Atajos de teclado**: `1`–`8` navegan, `/` busca juegos nuevos, `r` gira la
+  ruleta, `n` registra una partida, `Esc` cierra.
+- **App instalable (PWA)**: en el móvil, «Añadir a pantalla de inicio»; funciona
+  sin conexión gracias a un *service worker*. Responsive.
 
 ## Publicar en GitHub Pages
 
@@ -56,6 +71,9 @@ python3 -m http.server 8000
 # y abre http://localhost:8000
 ```
 
+Por el *service worker*, tras publicar cambios la primera visita muestra la
+versión guardada y la siguiente ya la nueva (o recarga con `Ctrl+Shift+R`).
+
 ## Tus datos
 
 - Se guardan **solo en tu navegador**, en la clave `dle-tracker:data` de
@@ -68,6 +86,18 @@ python3 -m http.server 8000
 - La primera visita crea cinco juegos de ejemplo (Wordle, Connections, Framed,
   Worldle y Globle). Sus URLs son las públicas conocidas; si alguna cambió,
   edítala desde **juegos → editar**.
+
+## Catálogo
+
+La sección **descubrir** usa el listado público de
+[dles.aukspot.com](https://dles.aukspot.com/), cuyo código y datos están en
+[aukspot/dles](https://github.com/aukspot/dles) bajo licencia GPL-3.0. Este
+repositorio **no copia** esos datos: el navegador descarga los JSON
+(`dles.json`, `new_dles.json`, `dles_of_the_week.json`) desde
+`raw.githubusercontent.com`, los guarda en `localStorage` un día y, sin
+conexión, usa la última copia. Las categorías se traducen al español; las
+descripciones se muestran tal cual (en inglés). Al agregar un juego se copian
+nombre, URL, descripción y categoría a tus juegos, y desde ahí puedes editarlos.
 
 ## Iconos
 
@@ -94,7 +124,8 @@ npm test        # o: node --test tests/*.test.js
 ```
 
 Cubren las rachas (días consecutivos, varios juegos el mismo día, huecos,
-cambios de mes/año, bisiestos, racha viva si se jugó ayer), estadísticas,
+cambios de mes/año, bisiestos, racha viva si se jugó ayer), el lector de
+resultados compartidos, el catálogo (caché, sin conexión), estadísticas,
 tendencia, semana, calendario, CRUD de juegos y partidas, validaciones,
 persistencia al recargar, datos corruptos, exportar/importar e iconos.
 
@@ -106,9 +137,13 @@ static/
 ├── css/styles.css     # Estilo consola, temas
 ├── js/logic.js        # Rachas y estadísticas (funciones puras)
 ├── js/store.js        # Datos en localStorage + mini API con validación
+├── js/catalog.js      # Catálogo de dles.aukspot.com (descarga y caché)
 ├── js/mascot.js       # Bit, la mascota en pixel art (SVG)
 ├── js/app.js          # Interfaz: rutas por hash (#/dashboard, #/game/1, …)
+├── icons/             # Iconos de la app (PWA)
 └── vendor/            # Chart.js y la fuente JetBrains Mono (OFL)
+manifest.webmanifest   # App instalable
+sw.js                  # Service worker (sin conexión)
 tests/                 # node --test
 .nojekyll              # GitHub Pages sin Jekyll
 ```
@@ -122,7 +157,7 @@ Un único objeto JSON en `localStorage`:
   "version": 1,
   "seq": { "game": 5, "session": 12 },
   "games": [{ "id": 1, "name": "Wordle", "url": "https://…", "category": "Palabras",
-              "icon": "🟩", "icon_url": "https://…/apple-touch-icon.png", "active": true,
+              "icon": "🟩", "icon_url": "https://…/apple-touch-icon.png", "active": true, "favorite": false,
               "track_attempts": true, "track_errors": false, "track_score": false, "track_time": false,
               "primary_metric": "attempts", "lower_is_better": true, "created_at": "…" }],
   "sessions": [{ "id": 1, "game_id": 1, "played_at": "2026-10-02", "result": "win",

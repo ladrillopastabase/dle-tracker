@@ -154,3 +154,37 @@ test("calendario del mes", () => {
   const days = L.calendarMonth([session(0), session(0, { result: "loss" }), { ...session(0), played_at: "2026-09-30" }], 2026, 10);
   assert.deepEqual(days, [{ date: TODAY, count: 2, wins: 1, losses: 1 }]);
 });
+
+/* ------------------------------------------------ resultados compartidos */
+
+test("parseShare: Wordle", () => {
+  assert.deepEqual(L.parseShare("Wordle 1.567 4/6*\n\n⬛🟨⬛⬛⬛\n⬛🟩🟨⬛⬛\n🟩🟩⬛🟩🟩\n🟩🟩🟩🟩🟩"),
+    { attempts: 4, result: "win" });
+  assert.deepEqual(L.parseShare("Wordle 1,567 X/6\n⬛⬛⬛⬛⬛"), { attempts: 6, result: "loss" });
+});
+
+test("parseShare: cuadrícula sin n/6 y fechas que no son intentos", () => {
+  assert.deepEqual(L.parseShare("Mi juego\n🟨⬛⬛⬛⬛\n🟩🟩🟩🟩🟩"), { attempts: 2, result: "win" });
+  assert.deepEqual(L.parseShare("Framed #1234 02/10/2026\n🎥 🟥 🟥 🟩 ⬛ ⬛ ⬛"), { attempts: 3, result: "win" });
+  assert.deepEqual(L.parseShare("Framed #1235\n🎥 🟥 🟥 🟥 🟥 🟥 🟥"), { attempts: 6, result: "loss" });
+  assert.equal(L.parseShare("Worldle #1000 (03.10.2026) 3/6 (100%)").attempts, 3);
+});
+
+test("parseShare: Connections", () => {
+  const win = "Connections\nPuzzle #500\n🟨🟨🟨🟨\n🟦🟩🟦🟦\n🟦🟦🟦🟦\n🟩🟩🟩🟩\n🟪🟪🟪🟪";
+  assert.deepEqual(L.parseShare(win), { errors: 1, result: "win" });
+  const loss = "Connections\nPuzzle #501\n🟨🟦🟨🟨\n🟨🟨🟦🟨\n🟨🟨🟨🟦\n🟦🟨🟨🟨";
+  assert.deepEqual(L.parseShare(loss), { errors: 4, result: "loss" });
+});
+
+test("parseShare: tiempo, puntaje y palabras clave", () => {
+  assert.equal(L.parseShare("Terminé en 1:23 🎉").time_seconds, 83);
+  assert.equal(L.parseShare("time 01:02:03").time_seconds, 3723);
+  assert.equal(L.parseShare("Solved in 45s").time_seconds, 45);
+  assert.equal(L.parseShare("Costcodle Score: 85").score, 85);
+  assert.equal(L.parseShare("Hice 12,5 puntos").score, 12.5);
+  assert.equal(L.parseShare("Game over 😢").result, "loss");
+  assert.equal(L.parseShare("¡Gané!").result, "win");
+  assert.deepEqual(L.parseShare(""), {});
+  assert.deepEqual(L.parseShare(null), {});
+});

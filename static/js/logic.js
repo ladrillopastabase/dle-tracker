@@ -287,7 +287,88 @@
     return [...days.keys()].sort().map((d) => days.get(d));
   }
 
+  /* ------------------------------------------------ resultados compartidos */
+
+  // Cuadrados de color que usan los juegos al compartir (🟩🟨⬛⬜🟦🟪🟥🟧🟫).
+  const SQUARE = /[\u{1F7E5}-\u{1F7EB}\u2B1B\u2B1C]/gu;
+
+  function squares(line) {
+    return line.match(SQUARE) || [];
+  }
+
+  /**
+   * Interpreta el texto que comparten los juegos ("Wordle 1.234 4/6", la
+   * cuadrícula de Connections, "Tiempo 1:23"…) y devuelve los campos que pudo
+   * deducir: result, attempts, errors, time_seconds, score.
+   */
+  function parseShare(text) {
+    const out = {};
+    if (typeof text !== "string" || !text.trim()) return out;
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const gridLines = lines.filter((l) => squares(l).length >= 3 && squares(l).length === [...l.replace(/\s/g, "")].length);
+
+    // "4/6", "X/6", "3 / 8" — el primero que no sea una fecha.
+    const frac = text.replace(/\d{1,4}[/-]\d{1,2}[/-]\d{1,4}/g, " ").match(/(^|[^\d/])(\d{1,3}|X)\s*\/\s*(\d{1,3})(?![\d/])/i);
+    if (frac) {
+      if (frac[2].toUpperCase() === "X") {
+        out.result = "loss";
+        out.attempts = Number(frac[3]);
+      } else {
+        const n = Number(frac[2]);
+        const max = Number(frac[3]);
+        if (n <= max) {
+          out.attempts = n;
+          out.result = "win";
+        }
+      }
+    }
+
+    // Cuadrícula tipo Connections: filas de 4 cuadrados.
+    const rows4 = gridLines.map(squares).filter((r) => r.length === 4);
+    if (rows4.length && rows4.length === gridLines.length && /connections|grupos|puzzle #/i.test(text)) {
+      const solved = rows4.filter((r) => r.every((c) => c === r[0])).length;
+      out.errors = rows4.length - solved;
+      out.result = solved >= 4 ? "win" : "loss";
+      delete out.attempts;
+    } else if (!frac && !gridLines.length && lines.some((l) => /[\u{1F7E5}\u{1F7E9}]/u.test(l) && squares(l).length >= 4)) {
+      // Una fila tipo Framed ("🎥 🟥 🟥 🟩 ⬛ ⬛"): el primer 🟩 marca el intento.
+      const row = squares(lines.find((l) => /[\u{1F7E5}\u{1F7E9}]/u.test(l) && squares(l).length >= 4));
+      const hit = row.indexOf("\u{1F7E9}");
+      out.result = hit >= 0 ? "win" : "loss";
+      out.attempts = hit >= 0 ? hit + 1 : row.filter((c) => c === "\u{1F7E5}").length;
+    } else if (!frac && gridLines.length) {
+      // Cuadrícula tipo Wordle sin "n/6": cada fila es un intento.
+      out.attempts = gridLines.length;
+      const last = squares(gridLines[gridLines.length - 1]);
+      out.result = last.every((c) => c === "\u{1F7E9}") ? "win" : "loss";
+    }
+
+    // Tiempo: "1:23", "01:02:03", "45s", "45 segundos".
+    const clock = text.match(/(?:^|\D)(\d{1,2}):(\d{2})(?::(\d{2}))?(?!\d)/);
+    if (clock) {
+      out.time_seconds = clock[3] !== undefined
+        ? Number(clock[1]) * 3600 + Number(clock[2]) * 60 + Number(clock[3])
+        : Number(clock[1]) * 60 + Number(clock[2]);
+    } else {
+      const secs = text.match(/(\d{1,5})\s*(s|seg|segundos|sec|seconds)\b/i);
+      if (secs) out.time_seconds = Number(secs[1]);
+    }
+
+    // Puntaje: "Score: 85", "85 puntos", "puntaje 85".
+    const score = text.match(/(?:score|puntaje|puntuaci[oó]n|points|puntos)\s*[:=]?\s*(-?\d+(?:[.,]\d+)?)/i)
+      || text.match(/(-?\d+(?:[.,]\d+)?)\s*(?:points|puntos|pts)\b/i);
+    if (score) out.score = Number(score[1].replace(",", "."));
+
+    // Palabras que delatan el resultado.
+    if (!out.result) {
+      if (/(failed|perd[ií]|lost|game over|❌)/i.test(text)) out.result = "loss";
+      else if (/(solved|won|gané|correct|🎉|✅|🏆)/i.test(text)) out.result = "win";
+    }
+    return out;
+  }
+
   return {
+    parseShare,
     METRIC_FIELDS, addDays, weekday, isValidISODate, localToday,
     bestStreak, currentStreak, streaks,
     basicCounts, weekBounds, weeklyComparison, trend, suggestedValues,
