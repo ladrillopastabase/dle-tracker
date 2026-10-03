@@ -657,17 +657,28 @@ td.notes-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; whi
 .sync-form .form-error { flex-basis: 100%; margin: 0; }
 .sync-form input { flex: 1; min-width: 200px; }
 
-/* ------------------------------------------------------------ emparejar (WebRTC) */
-.pair-modal { width: min(520px, calc(100vw - 32px)); }
+/* ------------------------------------------------------------ vincular dispositivos */
+.pair-modal { width: min(600px, calc(100vw - 32px)); }
 .pair-step { margin: 4px 0 10px; }
-.qr { background: #fff; padding: 10px; width: min(300px, 100%); margin: 0 auto 10px; line-height: 0; }
+.pair-show { display: grid; grid-template-columns: 220px 1fr; gap: 18px; align-items: center; margin-bottom: 12px; }
+.pair-how p { margin: 0 0 8px; }
+.pair-code {
+  font-size: 1.7rem; font-weight: 700; letter-spacing: 0.12em; color: var(--accent);
+  border: 1px dashed var(--border); padding: 6px 10px; text-align: center; user-select: all;
+}
+.qr { background: #fff; padding: 8px; width: 100%; max-width: 260px; margin: 0 auto; line-height: 0; }
 .qr svg { width: 100%; height: auto; display: block; }
-.pair-paste textarea { font-size: 0.8rem; word-break: break-all; }
-.pair-paste .card-actions { margin-top: 8px; }
+.pair-form { display: flex; gap: 8px; margin-bottom: 8px; }
+.pair-form input { flex: 1; min-width: 0; font-size: 1.2rem; letter-spacing: 0.1em; text-transform: uppercase; }
 .pair-scan { margin-top: 10px; }
 .pair-scan video { width: 100%; max-height: 280px; background: #000; object-fit: cover; }
-.pair-wait { display: flex; align-items: center; gap: 16px; margin: 6px 0 14px; }
+.pair-wait { display: flex; align-items: center; gap: 16px; margin: 6px 0 12px; }
 .pair-wait p { margin: 0 0 4px; }
+.peer-list { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 4px; }
+@media (max-width: 560px) {
+  .pair-show { grid-template-columns: 1fr; }
+  .pair-code { font-size: 1.4rem; }
+}
 
 /* ------------------------------------------------------------ móvil */
 @media (max-width: 760px) {

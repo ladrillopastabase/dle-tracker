@@ -63,9 +63,9 @@ datos se guardan en el navegador (`localStorage`), así que funciona en
 - **Personalización**: temas *phosphor*, *amber* y *paper* (claro) o según el
   sistema; **color de acento** (8 predefinidos o cualquiera); scanlines;
   mostrar u ocultar a Bit; tarjetas completas o compactas; nombre del prompt.
-- **Sincronizar dispositivos** (gratis, sin servidor propio): emparejando dos
-  dispositivos directamente con un QR (WebRTC) o con un gist secreto de tu
-  cuenta de GitHub (ver [Sincronizar](#sincronizar-entre-dispositivos)).
+- **Sincronizar dispositivos** (gratis, sin servidor propio): vinculando tus
+  dispositivos con un solo QR (o un código en el PC), que luego se reconectan
+  solos (WebRTC), o con un gist secreto de tu cuenta de GitHub (ver [Sincronizar](#sincronizar-entre-dispositivos)).
 - **Datos**: exportar / importar JSON y borrar todo.
 - **Atajos de teclado**: `:` o `Ctrl+K` comandos, `1`–`8` navegan, `/` busca
   juegos nuevos, `r` gira la ruleta, `n` registra una partida, `Esc` cierra.
@@ -116,27 +116,34 @@ versión guardada y la siguiente ya la nueva (o recarga con `Ctrl+Shift+R`).
 
 Hay dos formas, ambas gratis, en **config**; se pueden usar a la vez.
 
-### Emparejar con QR (WebRTC)
+### Vincular con un QR (WebRTC)
 
-Los dos dispositivos se conectan **directamente** entre sí: los datos no pasan
-por ningún servidor ni necesitas cuenta.
+Los dispositivos se conectan **directamente** entre sí: tus datos no pasan por
+ningún servidor y no necesitas cuenta.
 
-1. En el primero (p. ej. el computador): **📡 mostrar código** → aparece un QR.
-2. En el segundo: escanéalo con la cámara (abre la app en `…#/pair/DLE1.…`) o
-   pega el enlace en **📷 tengo un código**. Mostrará un código de respuesta.
-3. En el primero: escanea o pega esa respuesta y pulsa **⇄ conectar**.
+1. En el PC: **config → 📡 vincular un dispositivo**. Aparece un QR y un código
+   como `K7P2Q-X9M4R`.
+2. En el celular: **escanea el QR con la cámara**. Se abre la app y se conectan
+   solos. En otro PC (sin cámara): **⌨ tengo un código** y escribe el código.
+3. Listo: quedan **vinculados**. Cada vez que dos de ellos tienen la app abierta
+   se reconectan solos, sin volver a escanear, y cada cambio llega al instante
+   (la barra de estado muestra `⇄ 1`, `⇄ 2`…). Se pueden vincular varios
+   dispositivos al mismo grupo.
 
-Al conectarse se combinan los datos de ambos; mientras las dos pestañas sigan
-abiertas, cada cambio llega al otro al instante (la barra de estado muestra
-`⇄ par`). Al cerrar una pestaña la conexión termina y hay que repetir el
-emparejamiento la próxima vez.
+Cómo funciona: del código salen (con PBKDF2) el nombre de una sala y una clave
+AES-GCM. Para encontrarse, los dispositivos se dejan mensajes en esa sala de
+[ntfy.sh](https://ntfy.sh) (servicio público y gratuito de mensajes): solo los
+datos de conexión WebRTC, **cifrados**; ntfy no ve tus juegos ni puede leer
+nada sin el código. Luego se conectan directamente y combinan sus datos. Los
+servidores STUN públicos (Google, Cloudflare) solo sirven para descubrir la
+dirección de red.
 
-Detalles: los códigos son la oferta y la respuesta SDP comprimidas
-(`deflate-raw` + base64url, ~600 caracteres); el navegador usa servidores STUN
-públicos (Google, Cloudflare) solo para descubrir la dirección de red. Funciona
-mejor con ambos en la **misma red Wi-Fi**; entre redes distintas puede fallar
-tras NAT estrictos (redes móviles o corporativas), porque no hay servidor TURN
-de relevo. En ese caso usa el gist.
+Límites: ambos deben tener la app abierta a la vez (los celulares cortan la
+conexión en segundo plano; al volver a la pestaña se reconecta). Funciona mejor
+en la **misma red Wi-Fi**; entre redes distintas puede fallar tras NAT estrictos
+(datos móviles o redes corporativas), porque no hay servidor TURN de relevo. En
+ese caso usa el gist. Guarda el código en privado: quien lo tenga puede
+vincularse; **desvincular este** lo olvida en ese dispositivo.
 
 ### Gist de GitHub
 
@@ -200,8 +207,8 @@ npm test        # o: node --test tests/*.test.js
 Cubren las rachas (días consecutivos, varios juegos el mismo día, huecos,
 cambios de mes/año, bisiestos, racha viva si se jugó ayer), el lector de
 resultados compartidos, el catálogo (caché, sin conexión), la combinación de
-datos al sincronizar, la sincronización con gist (GitHub simulado), el
-emparejamiento WebRTC (códigos y protocolo con canales simulados), estadísticas,
+datos al sincronizar, la sincronización con gist (GitHub simulado), la
+vinculación por QR (códigos, cifrado, señalización y protocolo simulados), estadísticas,
 tendencia, semana, calendario, CRUD de juegos y partidas, validaciones,
 persistencia al recargar, datos corruptos, exportar/importar e iconos.
 
@@ -215,7 +222,7 @@ static/
 ├── js/store.js        # Datos en localStorage + mini API con validación
 ├── js/catalog.js      # Catálogo de dles.aukspot.com (descarga y caché)
 ├── js/sync.js         # Combinar datos + sincronización con gist de GitHub
-├── js/pair.js         # Emparejar dispositivos por WebRTC (QR)
+├── js/pair.js         # Vincular dispositivos por QR (WebRTC + ntfy cifrado)
 ├── js/mascot.js       # Bit, la mascota en pixel art (SVG)
 ├── js/app.js          # Interfaz: rutas por hash (#/dashboard, #/game/1, …)
 ├── icons/             # Iconos de la app (PWA)
