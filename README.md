@@ -24,6 +24,18 @@ datos se guardan en el navegador (`localStorage`), así que funciona en
   [dles.aukspot.com](https://dles.aukspot.com/): búsqueda, filtros por
   categoría, destacados de la semana, novedades, botón **🎲 sorpréndeme** y
   **+ agregar** con un clic (ver [Catálogo](#catálogo)).
+- **Jugar y anotar**: al pulsar **▶ jugar** el juego se abre en otra pestaña y
+  aparece la barra «▶ jugando» con un cronómetro; al volver a la pestaña del
+  tracker se abre solo el registro de ese juego (y, si el navegador lo permite,
+  lee el resultado que copiaste al compartir). En juegos de tiempo puedes usar
+  el cronómetro como tiempo.
+- **Registro en un toque**: cada tarjeta pendiente tiene botones
+  1·2·3·4·5·6·✗ (o 0…4·✗ para errores) que guardan al instante, con
+  **deshacer**. El formulario completo tiene fechas rápidas (hoy / ayer / otra),
+  «📋 pegar del portapapeles» y se guarda con Enter.
+- **Categorías e iconos a tu gusto**: al crear o editar un juego eliges la
+  categoría en una cuadrícula con iconos (las del catálogo, las tuyas o
+  «＋ otra») y el icono en una paleta de emojis; la categoría sugiere su icono.
 - **Pegar resultado**: al registrar, pega el texto que comparte el juego
   («Wordle 1.234 4/6», la cuadrícula de Connections, la fila de Framed, un
   tiempo «1:23», «Score: 85»…) y el formulario se rellena solo.

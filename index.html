@@ -58,6 +58,8 @@
       <main id="view" class="content" tabindex="-1" aria-live="polite"></main>
     </div>
 
+    <div class="playing-bar" id="playing-bar" hidden aria-live="polite"></div>
+
     <footer class="statusbar" aria-label="Barra de estado">
       <span class="sb-session">[dle]</span>
       <nav class="sb-tabs" aria-label="Navegación">
@@ -94,11 +96,14 @@
         <input name="url" type="url" maxlength="500" placeholder="https://…">
       </label>
       <div class="field icon-status" id="icon-status"></div>
-      <div class="row-2">
-        <label class="field grow">categoría
-          <input name="category" maxlength="50" placeholder="Palabras" list="category-list" autocomplete="off">
-          <datalist id="category-list"></datalist>
-        </label>
+      <div class="field">
+        <span class="field-label">categoría</span>
+        <div class="cat-picker" id="cat-picker" role="radiogroup" aria-label="Categoría"></div>
+        <input name="category" id="category-input" maxlength="50" placeholder="escribe tu propia categoría…" autocomplete="off" hidden>
+      </div>
+      <div class="field">
+        <span class="field-label">icono rápido <span class="muted">(se usa si la web del juego no tiene icono)</span></span>
+        <div class="emoji-picker" id="emoji-picker"></div>
       </div>
       <label class="field">descripción
         <input name="description" maxlength="500" placeholder="Juego diario de palabras">
@@ -146,17 +151,29 @@
         <button type="button" class="icon-btn" data-close aria-label="Cerrar">[x]</button>
       </header>
       <div class="form-error" role="alert" hidden></div>
+      <div class="session-head" id="session-head"></div>
       <label class="field" id="session-game-field">juego
         <select name="game_id"></select>
       </label>
-      <label class="field">fecha
-        <input name="played_at" type="date" required>
-      </label>
-      <details class="paste" id="paste-details">
-        <summary>📋 pegar resultado compartido</summary>
-        <textarea id="share-input" rows="3" placeholder="Pega aquí el texto que copia el juego al compartir (p. ej. «Wordle 1.234 4/6» con su cuadrícula)"></textarea>
+      <div class="field">
+        <span class="field-label">fecha</span>
+        <div class="date-row">
+          <div class="segmented date-chips" id="date-chips" role="radiogroup" aria-label="Fecha">
+            <label><input type="radio" name="when" value="today"><span>hoy</span></label>
+            <label><input type="radio" name="when" value="yesterday"><span>ayer</span></label>
+            <label><input type="radio" name="when" value="other"><span>otra…</span></label>
+          </div>
+          <input name="played_at" type="date" required aria-label="Fecha de la partida">
+        </div>
+      </div>
+      <div class="paste-row">
+        <button type="button" class="btn" id="paste-clipboard" title="Lee el resultado que copiaste en el juego">📋 pegar del portapapeles</button>
+        <details class="paste" id="paste-details">
+          <summary>o pégalo aquí</summary>
+          <textarea id="share-input" rows="3" placeholder="Pega el texto que copia el juego al compartir (p. ej. «Wordle 1.234 4/6» con su cuadrícula)"></textarea>
+        </details>
         <p class="muted small" id="share-detected" aria-live="polite"></p>
-      </details>
+      </div>
       <div class="field">
         <span class="field-label">resultado</span>
         <div class="segmented" role="radiogroup" aria-label="Resultado">
@@ -165,6 +182,7 @@
         </div>
       </div>
       <div id="metric-fields"></div>
+      <p class="elapsed-hint" id="elapsed-hint" hidden></p>
       <details class="notes" id="notes-details">
         <summary>notas</summary>
         <textarea name="notes" rows="2" maxlength="1000" placeholder="opcional"></textarea>

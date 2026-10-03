@@ -172,6 +172,85 @@ function userName() {
   try { return localStorage.getItem("dle-user") || "player"; } catch { return "player"; }
 }
 
+/* ================================================================ jugando ahora */
+
+/* Al pulsar «jugar», el juego se abre en otra pestaña y la app queda
+   esperando: al volver a esta pestaña se abre el registro de ese juego. */
+
+function loadPlaying() {
+  try {
+    const list = JSON.parse(localStorage.getItem("dle-playing")) || [];
+    // Solo cuenta lo empezado en las últimas 12 horas.
+    return list.filter((p) => Date.now() - p.started < 12 * 3600e3 && gameById(p.id));
+  } catch {
+    return [];
+  }
+}
+
+function savePlaying(list) {
+  writePref("dle-playing", list.length ? JSON.stringify(list) : null);
+  renderPlayingBar();
+}
+
+function isPlaying(id) {
+  return loadPlaying().some((p) => p.id === Number(id));
+}
+
+function playingSince(id) {
+  return loadPlaying().find((p) => p.id === Number(id))?.started ?? null;
+}
+
+function startPlaying(id) {
+  const list = loadPlaying().filter((p) => p.id !== Number(id));
+  list.unshift({ id: Number(id), started: Date.now(), prompted: false });
+  savePlaying(list);
+}
+
+function stopPlaying(id) {
+  savePlaying(loadPlaying().filter((p) => p.id !== Number(id)));
+}
+
+function elapsed(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return fmtTime(s);
+}
+
+function renderPlayingBar() {
+  const bar = $("#playing-bar");
+  const list = loadPlaying();
+  bar.hidden = !list.length;
+  if (!list.length) {
+    bar.innerHTML = "";
+    return;
+  }
+  bar.innerHTML = `<span class="pb-label">▶ jugando</span>${list.map((p) => {
+    const g = gameById(p.id);
+    return `<span class="pb-item">${gicon(g)} ${esc(g.name)} <span class="pb-time num" data-since="${p.started}">${elapsed(Date.now() - p.started)}</span>
+      <button class="btn primary" data-log="${g.id}">⏎ anotar</button>
+      <button class="icon-btn" data-stop-playing="${g.id}" title="Dejar de esperar" aria-label="Dejar de esperar ${esc(g.name)}">[x]</button></span>`;
+  }).join("")}`;
+}
+
+setInterval(() => {
+  $$("#playing-bar .pb-time").forEach((el) => { el.textContent = elapsed(Date.now() - Number(el.dataset.since)); });
+  const hint = $("#elapsed-hint [data-since]");
+  if (hint) hint.textContent = elapsed(Date.now() - Number(hint.dataset.since));
+}, 1000);
+
+/** Al volver a la pestaña, abre el registro del último juego que abriste (una vez). */
+function promptPlaying() {
+  if (document.visibilityState !== "visible" || document.querySelector("dialog[open]")) return;
+  const list = loadPlaying();
+  const next = list.find((p) => !p.prompted && Date.now() - p.started > 4000);
+  if (!next) return;
+  next.prompted = true;
+  savePlaying(list);
+  openSessionForm({ gameId: next.id, fromPlay: true }).catch((err) => toast(err.message, "error"));
+}
+
+document.addEventListener("visibilitychange", promptPlaying);
+window.addEventListener("focus", promptPlaying);
+
 /* ================================================================ piezas de UI */
 
 /** Cabecera de página con línea de prompt: player@dle:~/ruta$ comando */
@@ -238,8 +317,6 @@ async function api(path, options = {}) {
 
 async function loadGames() {
   state.games = await api("/api/games");
-  $("#category-list").innerHTML = [...new Set(state.games.map((g) => g.category).filter(Boolean))]
-    .map((c) => `<option value="${esc(c)}">`).join("");
 }
 
 async function loadOverview() {
@@ -251,12 +328,23 @@ async function loadOverview() {
 
 /* ================================================================ UI genérica */
 
-function toast(message, type = "info") {
+/** Aviso breve; `action` = { label, run } añade un botón (p. ej. «deshacer»). */
+function toast(message, type = "info", action = null) {
   const el = document.createElement("div");
   el.className = `toast ${type}`;
   el.textContent = message;
+  if (action) {
+    const btn = document.createElement("button");
+    btn.className = "btn toast-action";
+    btn.textContent = action.label;
+    btn.addEventListener("click", () => {
+      el.remove();
+      action.run();
+    });
+    el.append(" ", btn);
+  }
   $("#toasts").append(el);
-  setTimeout(() => el.remove(), type === "error" ? 5000 : 2500);
+  setTimeout(() => el.remove(), action ? 7000 : type === "error" ? 5000 : 2500);
 }
 
 function confirmDialog(title, text, okLabel = "eliminar") {
@@ -458,6 +546,7 @@ async function router() {
   $("#titlebar-text").textContent = `${userName()}@dle: ${ROUTE_PATH[name]}`;
   try {
     await loadGames();
+    renderPlayingBar();
     const html = await routes[name](param);
     view.innerHTML = `<div class="view">${html}</div>`;
     Mascot.mountAll(view);
@@ -496,6 +585,41 @@ function mascotState(o) {
   return { mood: "idle", text: `Vas ${o.played_today}/${o.today_total}. Quedan ${pending}; si dudas, la ruleta elige por ti [r].` };
 }
 
+/**
+ * Registro en un toque desde la tarjeta: 1·2·3·4·5·6·✗ (intentos) o
+ * 0·1·2·3·✗ (errores). Solo para juegos cuya métrica principal es esa.
+ */
+function quickLogRow(game) {
+  const metric = game.primary_metric;
+  if (!["attempts", "errors"].includes(metric) || game.track_time || game.track_score) return "";
+  const values = METRICS[metric].quick;
+  return `<div class="quicklog-wrap"><span class="muted small">registro rápido · ${metric === "attempts" ? "intentos" : "errores"}</span>
+    <div class="quicklog" role="group" aria-label="Registro rápido de ${esc(game.name)}">
+      ${values.map((v) => `<button class="ql" data-quicklog="${game.id}" data-value="${v}" title="Victoria con ${v} ${METRICS[metric].label}">${v}</button>`).join("")}
+      <button class="ql loss" data-quicklog="${game.id}" data-value="loss" title="Derrota">✗</button>
+    </div></div>`;
+}
+
+async function quickLog(gameId, value) {
+  const game = gameById(gameId);
+  const metric = game.primary_metric;
+  const loss = value === "loss";
+  const max = METRICS[metric].quick.at(-1);
+  const body = { game_id: game.id, played_at: state.today, result: loss ? "loss" : "win", notes: "" };
+  body[metric] = loss ? (metric === "attempts" ? max : max) : Number(value);
+  const session = await api("/api/sessions", { method: "POST", body });
+  stopPlaying(game.id);
+  toast(`${game.name}: ${loss ? "derrota" : `victoria · ${body[metric]} ${METRICS[metric].label}`}`, "info", {
+    label: "deshacer",
+    run: async () => {
+      await api(`/api/sessions/${session.id}`, { method: "DELETE" });
+      toast("registro deshecho");
+      refresh();
+    },
+  });
+  refresh();
+}
+
 function favButton(game) {
   return `<button class="star ${game.favorite ? "on" : ""}" data-fav="${game.id}" aria-pressed="${game.favorite}"
     title="${game.favorite ? "Quitar de favoritos" : "Marcar como favorito"}">${game.favorite ? "★" : "☆"}</button>`;
@@ -520,14 +644,16 @@ function gameCard(game, card) {
   rows.push(["racha", card?.current_streak
     ? `<span class="tag streak">${card.current_streak}d</span> ${asciiBar(Math.min(card.current_streak, 10), 10, 10)}`
     : '<span class="muted">—</span>']);
+  const playing = isPlaying(game.id);
   const body = `
     ${kv(rows)}
+    ${!card?.played_today ? quickLogRow(game) : ""}
     <div class="card-actions">
-      ${game.url ? `<a class="btn" href="${esc(game.url)}" target="_blank" rel="noopener noreferrer">▶ jugar</a>` : ""}
-      <button class="btn primary" data-log="${game.id}">${card?.played_today ? "editar" : "+ registrar"}</button>
+      ${game.url ? `<a class="btn" href="${esc(game.url)}" target="_blank" rel="noopener noreferrer" data-play="${game.id}">▶ jugar</a>` : ""}
+      <button class="btn primary" data-log="${game.id}">${card?.played_today ? "editar" : playing ? "⏎ anotar resultado" : "+ registrar"}</button>
     </div>`;
   const title = `${gicon(game)} <a href="#/game/${game.id}">${esc(slug(game.name))}</a>`;
-  return pane(title, body, { cls: `game-card ${card?.played_today ? "done" : ""} ${resting ? "resting" : ""}`, tag: "article", aside: favButton(game) });
+  return pane(title, body, { cls: `game-card ${card?.played_today ? "done" : ""} ${resting ? "resting" : ""} ${playing && !card?.played_today ? "playing" : ""}`, tag: "article", aside: favButton(game) });
 }
 
 function weekPane(week, { title = "semana", metricKey = "attempts", lowerBetter = true } = {}) {
@@ -603,7 +729,7 @@ async function renderDashboard() {
       cmd: "dlefetch",
       title: "dashboard",
       actions: `
-        ${nextPending ? `<a class="btn primary" href="${esc(nextPending.url)}" target="_blank" rel="noopener noreferrer"
+        ${nextPending ? `<a class="btn primary" href="${esc(nextPending.url)}" target="_blank" rel="noopener noreferrer" data-play="${nextPending.id}"
           title="Abrir ${esc(nextPending.name)}">▶ siguiente: ${esc(nextPending.name)}</a>` : ""}
         <a class="btn" href="#/roulette" data-spin-link>🎲 ruleta</a>
         <button class="btn" data-share-day title="Copiar el resumen de hoy">⧉ compartir día</button>
@@ -877,7 +1003,7 @@ async function renderGames() {
           <div class="muted small">${esc(g.description || "")}${g.description ? " · " : ""}${c?.played || 0} partidas · métrica: ${METRICS[g.primary_metric].label}</div>
         </div>
         <span class="card-actions">
-          ${g.url ? `<a class="btn" href="${esc(g.url)}" target="_blank" rel="noopener noreferrer">▶</a>` : ""}
+          ${g.url ? `<a class="btn" href="${esc(g.url)}" target="_blank" rel="noopener noreferrer" data-play="${g.id}">▶</a>` : ""}
           <button class="btn" data-edit-game="${g.id}">editar</button>
           <button class="btn" data-toggle-game="${g.id}">${g.active ? "desactivar" : "activar"}</button>
           <button class="btn danger" data-delete-game="${g.id}">rm</button>
@@ -937,7 +1063,7 @@ async function renderGame(id) {
       title: `${gicon(game, "xl")} ${esc(game.name)} ${game.active ? "" : '<span class="tag pending small">[inactivo]</span>'}`,
       sub: esc(game.description || game.category || ""),
       actions: `
-        ${game.url ? `<a class="btn" href="${esc(game.url)}" target="_blank" rel="noopener noreferrer">▶ jugar</a>` : ""}
+        ${game.url ? `<a class="btn" href="${esc(game.url)}" target="_blank" rel="noopener noreferrer" data-play="${game.id}">▶ jugar</a>` : ""}
         <button class="btn" data-edit-game="${game.id}">editar</button>
         <button class="btn primary" data-log="${game.id}">+ registrar</button>`,
     })}
@@ -1067,7 +1193,7 @@ function queuePane() {
       <span class="q-num">${String(i + 1).padStart(2, "0")}</span>
       ${gicon(g)} <span class="grow">${esc(g.name)}</span>
       ${done ? resultTag(cards[id].last_session.result, { label: false })
-        : `${g.url ? `<a class="btn" href="${esc(g.url)}" target="_blank" rel="noopener noreferrer" title="Jugar">▶</a>` : ""}
+        : `${g.url ? `<a class="btn" href="${esc(g.url)}" target="_blank" rel="noopener noreferrer" title="Jugar" data-play="${g.id}">▶</a>` : ""}
            <button class="btn primary" data-log="${g.id}" title="Registrar">+</button>`}
     </li>`;
   }).join("");
@@ -1110,7 +1236,7 @@ async function renderRoulette() {
          </div>
        </div>
        <div class="card-actions">
-         ${res.url ? `<a class="btn primary" href="${esc(res.url)}" target="_blank" rel="noopener noreferrer">▶ jugar ahora</a>` : ""}
+         ${res.url ? `<a class="btn primary" href="${esc(res.url)}" target="_blank" rel="noopener noreferrer" data-play="${res.id}">▶ jugar ahora</a>` : ""}
          <button class="btn" data-log="${res.id}">+ registrar</button>
        </div>`
     : `<div class="result-row"><span data-mascot="${r.spinning ? "spin" : "idle"}" data-scale="5" id="reel-mascot"></span>
@@ -1211,7 +1337,7 @@ function spinRoulette() {
           <div class="grow"><div class="result-name">${gicon(winner, "xl")} ${esc(winner.name)}</div>
           <p class="dim small">${esc(winner.description || "")}</p></div></div>
         <div class="card-actions">
-          ${winner.url ? `<a class="btn primary" href="${esc(winner.url)}" target="_blank" rel="noopener noreferrer">▶ jugar ahora</a>` : ""}
+          ${winner.url ? `<a class="btn primary" href="${esc(winner.url)}" target="_blank" rel="noopener noreferrer" data-play="${winner.id}">▶ jugar ahora</a>` : ""}
           <button class="btn" data-log="${winner.id}">+ registrar</button>
         </div>`;
       Mascot.mountAll($("#roulette-result"));
@@ -1756,6 +1882,8 @@ function openGameForm(game = null) {
     gameForm.elements[key].checked = !!g[key];
   }
   $("#active-field").hidden = !game;
+  renderCategoryPicker(g.category || "");
+  renderEmojiPicker();
   $$('#day-picker input').forEach((c) => { c.checked = Array.isArray(g.days) && g.days.includes(Number(c.value)); });
   renderIconStatus(game);
   updatePrimaryOptions(g.primary_metric);
@@ -1798,6 +1926,70 @@ gameForm.addEventListener("click", (e) => {
   if (t?.dataset.iconRefresh) iconAction(Number(t.dataset.iconRefresh), "POST");
   else if (t?.dataset.iconRemove) iconAction(Number(t.dataset.iconRemove), "DELETE");
 });
+
+/* --- selector de categoría e icono --- */
+
+const EMOJIS = ["🟩", "🟨", "🟪", "🟦", "🟥", "🔤", "🧩", "🧠", "🧮", "🌍", "🗺️", "🚩", "🎬", "📺", "🎵", "🎮",
+  "⚽", "🃏", "🔬", "🎨", "🍔", "🚗", "📜", "❓", "📏", "🔷", "🎯", "⭐", "🔥", "💎", "🐱", "🎲"];
+
+/** Categorías del catálogo (con su icono) más las que ya usas. */
+function categoryOptions(current) {
+  const options = Object.values(DleCatalog.CATEGORIES).map(([label, icon]) => ({ label, icon }));
+  const known = new Set(options.map((o) => o.label.toLowerCase()));
+  for (const c of [...state.games.map((g) => g.category), current]) {
+    if (c && !known.has(c.toLowerCase())) {
+      known.add(c.toLowerCase());
+      options.push({ label: c, icon: "🏷️", custom: true });
+    }
+  }
+  return options;
+}
+
+function renderCategoryPicker(current) {
+  const options = categoryOptions(current);
+  const match = options.find((o) => o.label.toLowerCase() === current.toLowerCase());
+  $("#cat-picker").innerHTML = `
+    <label><input type="radio" name="cat-choice" value="" ${current ? "" : "checked"}><span class="muted">ninguna</span></label>
+    ${options.map((o) => `<label><input type="radio" name="cat-choice" value="${esc(o.label)}" data-icon="${esc(o.icon)}"
+      ${match === o ? "checked" : ""}><span>${o.icon} ${esc(o.label.toLowerCase())}</span></label>`).join("")}
+    <label><input type="radio" name="cat-choice" value="__other"><span>＋ otra</span></label>`;
+  const input = $("#category-input");
+  input.value = current;
+  input.hidden = true;
+}
+
+function renderEmojiPicker() {
+  const current = gameForm.elements.icon.value;
+  const catIcon = $('#cat-picker input:checked')?.dataset.icon;
+  const list = [...new Set([catIcon, ...EMOJIS].filter((x) => x && x !== "🏷️"))];
+  $("#emoji-picker").innerHTML = list.map((e) => `<button type="button" class="emoji ${e === current ? "on" : ""}" data-emoji-pick="${e}"
+    aria-label="Usar ${e}">${e}</button>`).join("");
+}
+
+$("#cat-picker").addEventListener("change", (e) => {
+  const input = $("#category-input");
+  if (e.target.value === "__other") {
+    input.hidden = false;
+    input.value = "";
+    input.focus();
+    return;
+  }
+  input.hidden = true;
+  input.value = e.target.value;
+  // Sugerir el icono de la categoría si el actual es genérico.
+  const icon = gameForm.elements.icon;
+  const generic = !icon.value || icon.value === "🎮" || Object.values(DleCatalog.CATEGORIES).some(([, i]) => i === icon.value);
+  if (generic && e.target.dataset.icon && e.target.dataset.icon !== "🏷️") icon.value = e.target.dataset.icon;
+  renderEmojiPicker();
+});
+
+$("#emoji-picker").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-emoji-pick]");
+  if (!b) return;
+  gameForm.elements.icon.value = b.dataset.emojiPick;
+  renderEmojiPicker();
+});
+gameForm.elements.icon.addEventListener("input", renderEmojiPicker);
 
 gameForm.addEventListener("change", (e) => {
   if (e.target.name?.startsWith("track_")) updatePrimaryOptions();
@@ -1876,7 +2068,7 @@ function renderMetricFields(game, values) {
  * - gameId: registra para ese juego (si ya hay partida ese día, la edita).
  * - sin gameId: muestra selector de juego.
  */
-async function openSessionForm({ gameId = null, session = null, date = null } = {}) {
+async function openSessionForm({ gameId = null, session = null, date = null, fromPlay = false } = {}) {
   sessionForm.reset();
   showFormError(sessionForm, "");
   if (!state.overview) await loadOverview();
@@ -1900,6 +2092,7 @@ async function openSessionForm({ gameId = null, session = null, date = null } = 
   $("#session-delete").hidden = !session;
   el.played_at.value = playedAt;
   el.played_at.max = state.today;
+  syncDateChips();
   el.notes.value = session?.notes ?? "";
   $("#notes-details").open = !!session?.notes;
   $("#share-input").value = "";
@@ -1909,7 +2102,56 @@ async function openSessionForm({ gameId = null, session = null, date = null } = 
   $("#session-dialog").showModal();
   const firstMetric = $("#metric-fields input");
   (firstMetric || sessionForm.querySelector('[name="result"]:checked'))?.focus();
+  // Si el navegador ya dio permiso, leer el resultado copiado sin preguntar.
+  if (!session && fromPlay) tryClipboard({ silent: true });
 }
+
+function syncDateChips() {
+  const v = sessionForm.elements.played_at.value;
+  const when = v === state.today ? "today" : v === addDays(state.today, -1) ? "yesterday" : "other";
+  sessionForm.elements.when.value = when;
+  sessionForm.elements.played_at.classList.toggle("collapsed", when !== "other");
+}
+
+/** Lee el portapapeles y lo interpreta. `silent`: solo si ya hay permiso, sin avisos. */
+async function tryClipboard({ silent = false } = {}) {
+  if (!navigator.clipboard?.readText) {
+    if (!silent) {
+      $("#paste-details").open = true;
+      $("#share-input").focus();
+    }
+    return;
+  }
+  try {
+    if (silent) {
+      const perm = await navigator.permissions?.query({ name: "clipboard-read" }).catch(() => null);
+      if (perm?.state !== "granted") return;
+    }
+    const text = await navigator.clipboard.readText();
+    if (!text.trim()) {
+      if (!silent) $("#share-detected").textContent = "el portapapeles está vacío";
+      return;
+    }
+    $("#share-input").value = text;
+    applySharedResult(text);
+  } catch {
+    if (!silent) {
+      $("#share-detected").textContent = "no pude leer el portapapeles: pega el texto aquí abajo";
+      $("#paste-details").open = true;
+      $("#share-input").focus();
+    }
+  }
+}
+
+$("#paste-clipboard").addEventListener("click", () => tryClipboard());
+$("#date-chips").addEventListener("change", (e) => {
+  const el = sessionForm.elements.played_at;
+  if (e.target.value === "today") el.value = state.today;
+  else if (e.target.value === "yesterday") el.value = addDays(state.today, -1);
+  el.classList.toggle("collapsed", e.target.value !== "other");
+  if (e.target.value === "other") el.focus();
+});
+sessionForm.elements.played_at.addEventListener("change", syncDateChips);
 
 /** Ajusta título, resultado y métricas al juego seleccionado. */
 function fillForGame(session = null) {
@@ -1924,6 +2166,15 @@ function fillForGame(session = null) {
   $("#session-form-title").textContent = `${session ? "editar" : "registrar"} · ${slug(game.name)}`;
   el.result.value = values.result || "win";
   renderMetricFields(game, values);
+  const since = playingSince(game.id);
+  $("#session-head").innerHTML = `${gicon(game, "xl")}<div><b>${esc(game.name)}</b>
+    <div class="muted small">${since ? `jugando desde hace <span class="num">${elapsed(Date.now() - since)}</span>` : esc(game.category || "")}</div></div>`;
+  const hint = $("#elapsed-hint");
+  hint.hidden = !(since && game.track_time && !session);
+  if (!hint.hidden) {
+    hint.innerHTML = `⏱ <span class="num" data-since="${since}">${elapsed(Date.now() - since)}</span> desde que abriste el juego
+      <button type="button" class="btn" data-use-elapsed>usar como tiempo</button>`;
+  }
 }
 
 sessionForm.addEventListener("change", (e) => {
@@ -1955,6 +2206,12 @@ function applySharedResult(text) {
 $("#share-input").addEventListener("input", (e) => applySharedResult(e.target.value));
 
 sessionForm.addEventListener("click", (e) => {
+  if (e.target.closest("[data-use-elapsed]")) {
+    const since = playingSince(sessionForm.elements.game_id.value);
+    const input = sessionForm.elements.time_seconds;
+    if (since && input) input.value = elapsed(Date.now() - since);
+    return;
+  }
   const btn = e.target.closest("[data-quick]");
   if (!btn) return;
   const input = sessionForm.elements[btn.dataset.quick];
@@ -2002,6 +2259,7 @@ sessionForm.addEventListener("submit", async (e) => {
   const id = sessionForm.dataset.id;
   try {
     await api(id ? `/api/sessions/${id}` : "/api/sessions", { method: id ? "PUT" : "POST", body: payload });
+    stopPlaying(game.id);
     $("#session-dialog").close();
     toast(id ? "partida actualizada" : `${game.name} registrado`);
     refresh();
@@ -2036,6 +2294,12 @@ document.addEventListener("click", async (e) => {
   const t = e.target.closest("button, a");
   if (!t) return;
   const d = t.dataset;
+  // «Jugar»: el enlace abre la pestaña del juego y la app queda esperando.
+  if (d.play) {
+    startPlaying(d.play);
+    if (state.route === "dashboard") refresh();
+    return;
+  }
   try {
     if ("newGame" in d) openGameForm();
     else if (d.editGame) openGameForm(gameById(d.editGame));
@@ -2043,6 +2307,13 @@ document.addEventListener("click", async (e) => {
     else if (d.editSession) await openSessionForm({ session: await api(`/api/sessions/${d.editSession}`) });
     else if (d.deleteSession) await deleteSession(d.deleteSession);
     else if ("spinLink" in d) state.roulette.autoSpin = true;
+    else if (d.quicklog) {
+      t.disabled = true;
+      await quickLog(Number(d.quicklog), d.value);
+    } else if (d.stopPlaying) {
+      stopPlaying(d.stopPlaying);
+      if (state.route === "dashboard") refresh();
+    }
     else if ("toggleSound" in d) {
       writePref("dle-sound", readPref("dle-sound", "off") === "on" ? null : "on");
       beep(1200, 40);
@@ -2148,7 +2419,7 @@ function paletteCommands(query) {
   NAV_ORDER.forEach((r, i) => add(`ir a ${names[r]}`, String(i + 1), () => { location.hash = `#/${r}`; }));
   const pending = new Set(state.overview?.pending_today || []);
   for (const g of [...state.games].filter((x) => x.active).sort((a, b) => pending.has(b.id) - pending.has(a.id))) {
-    if (g.url) add(`jugar ${g.name}`, pending.has(g.id) ? "pendiente" : "", () => window.open(g.url, "_blank", "noopener"));
+    if (g.url) add(`jugar ${g.name}`, pending.has(g.id) ? "pendiente" : "", () => { startPlaying(g.id); window.open(g.url, "_blank", "noopener"); });
     add(`registrar ${g.name}`, "", () => openSessionForm({ gameId: g.id }));
     add(`ver ${g.name}`, "", () => { location.hash = `#/game/${g.id}`; });
   }

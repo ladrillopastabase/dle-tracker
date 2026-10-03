@@ -589,6 +589,69 @@ td.notes-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; whi
 .swatch.custom { position: relative; overflow: hidden; background: conic-gradient(red, yellow, lime, cyan, blue, magenta, red); }
 .swatch.custom input { position: absolute; inset: -8px; opacity: 0; cursor: pointer; width: 200%; height: 200%; }
 
+/* ------------------------------------------------------------ registro rápido */
+.quicklog-wrap { display: grid; gap: 4px; }
+.quicklog { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; }
+.ql {
+  height: 32px; padding: 0; border: 1px solid var(--line-2); background: transparent;
+  color: var(--text); font-weight: 700; cursor: pointer; font-variant-numeric: tabular-nums;
+}
+.ql:hover, .ql:focus-visible { background: var(--win); border-color: var(--win); color: var(--bg); outline: none; }
+.ql.loss { color: var(--loss); }
+.ql.loss:hover, .ql.loss:focus-visible { background: var(--loss); border-color: var(--loss); color: var(--bg); }
+.ql[disabled] { opacity: 0.4; }
+.game-card.playing { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 18px var(--glow); }
+
+/* barra «jugando ahora» */
+.playing-bar {
+  position: sticky; bottom: 26px; z-index: 29;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px;
+  padding: 6px 14px; background: var(--surface-2); border-top: 1px solid var(--accent);
+  font-size: 0.85rem;
+}
+.pb-label { color: var(--accent); font-weight: 700; animation: blink 1.6s steps(1) infinite; }
+.pb-item { display: inline-flex; align-items: center; gap: 6px; }
+.pb-time { color: var(--streak); }
+.toast-action { margin-left: 6px; color: var(--accent); }
+
+/* formulario de partida */
+.session-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.session-head .gicon, .session-head .gicon-emoji { width: 40px; height: 40px; font-size: 2rem; }
+.date-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.date-chips { grid-template-columns: repeat(3, auto) !important; }
+.date-chips span { padding: 5px 14px; }
+.date-row input.collapsed { display: none; }
+.date-row input { width: auto !important; flex: 1; min-width: 150px; }
+.paste-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: -2px 0 14px; }
+.paste-row .paste { margin: 0; flex: 1; min-width: 160px; }
+.paste-row .paste summary { margin: 0; color: var(--text-2); }
+.paste-row .paste[open] { flex-basis: 100%; }
+.paste-row #share-detected { flex-basis: 100%; margin: 0; color: var(--accent); }
+.elapsed-hint { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--text-2); font-size: 0.85rem; margin: -6px 0 12px; }
+.elapsed-hint .num { color: var(--streak); font-weight: 700; }
+#session-dialog .quick button { min-width: 44px; height: 44px; font-size: 1.05rem; }
+#session-dialog .segmented span { padding: 10px; }
+
+/* selector de categoría e icono */
+.cat-picker { display: flex; flex-wrap: wrap; gap: 6px; }
+.cat-picker label { cursor: pointer; }
+.cat-picker input { position: absolute; opacity: 0; pointer-events: none; }
+.cat-picker span {
+  display: inline-block; padding: 4px 10px; border: 1px solid var(--line-2); color: var(--text-2);
+  font-size: 0.82rem; transition: border-color 0.1s;
+}
+.cat-picker label:hover span { border-color: var(--text-2); color: var(--text); }
+.cat-picker input:checked + span { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 700; }
+.cat-picker input:focus-visible + span { outline: 1px dashed var(--accent); outline-offset: 2px; }
+#category-input { margin-top: 8px; }
+.emoji-picker { display: flex; flex-wrap: wrap; gap: 4px; }
+.emoji {
+  width: 36px; height: 36px; font-size: 1.2rem; line-height: 1; padding: 0; cursor: pointer;
+  border: 1px solid var(--line); background: transparent;
+}
+.emoji:hover { border-color: var(--text-2); }
+.emoji.on { border-color: var(--accent); background: var(--surface-2); box-shadow: 0 0 0 1px var(--accent); }
+
 /* ------------------------------------------------------------ móvil */
 @media (max-width: 760px) {
   .sidebar { display: none; }
@@ -605,6 +668,7 @@ td.notes-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; whi
   .cal-day .icons, .cal-day .more { display: none; }
   .cal-day .cnt { display: block; }
   .toasts { left: 16px; right: 16px; bottom: 52px; }
+  .playing-bar { bottom: 40px; }
 
   .history-table thead { display: none; }
   .history-table tr { display: grid; grid-template-columns: 1fr auto; gap: 0 12px; padding: 10px 0; border-bottom: 1px dashed var(--line); }
