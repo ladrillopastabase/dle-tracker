@@ -63,6 +63,9 @@ datos se guardan en el navegador (`localStorage`), así que funciona en
 - **Personalización**: temas *phosphor*, *amber* y *paper* (claro) o según el
   sistema; **color de acento** (8 predefinidos o cualquiera); scanlines;
   mostrar u ocultar a Bit; tarjetas completas o compactas; nombre del prompt.
+- **Sincronizar dispositivos** (gratis, sin servidor propio): emparejando dos
+  dispositivos directamente con un QR (WebRTC) o con un gist secreto de tu
+  cuenta de GitHub (ver [Sincronizar](#sincronizar-entre-dispositivos)).
 - **Datos**: exportar / importar JSON y borrar todo.
 - **Atajos de teclado**: `:` o `Ctrl+K` comandos, `1`–`8` navegan, `/` busca
   juegos nuevos, `r` gira la ruleta, `n` registra una partida, `Esc` cierra.
@@ -99,7 +102,8 @@ versión guardada y la siguiente ya la nueva (o recarga con `Ctrl+Shift+R`).
 
 - Se guardan **solo en tu navegador**, en la clave `dle-tracker:data` de
   `localStorage`. Nadie más los ve y no se envían a ningún servidor.
-- Son por navegador y dispositivo: para pasarlos a otro, **exporta** el JSON en
+- Son por navegador y dispositivo: para tenerlos en otro, usa
+  [Sincronizar](#sincronizar-entre-dispositivos) o **exporta** el JSON en
   Configuración e **impórtalo** allí. Exporta de vez en cuando como copia de
   seguridad: si borras los datos del sitio en el navegador, se pierden.
 - La importación valida todo antes de reemplazar nada y acepta también las
@@ -107,6 +111,55 @@ versión guardada y la siguiente ya la nueva (o recarga con `Ctrl+Shift+R`).
 - La primera visita crea cinco juegos de ejemplo (Wordle, Connections, Framed,
   Worldle y Globle). Sus URLs son las públicas conocidas; si alguna cambió,
   edítala desde **juegos → editar**.
+
+## Sincronizar entre dispositivos
+
+Hay dos formas, ambas gratis, en **config**; se pueden usar a la vez.
+
+### Emparejar con QR (WebRTC)
+
+Los dos dispositivos se conectan **directamente** entre sí: los datos no pasan
+por ningún servidor ni necesitas cuenta.
+
+1. En el primero (p. ej. el computador): **📡 mostrar código** → aparece un QR.
+2. En el segundo: escanéalo con la cámara (abre la app en `…#/pair/DLE1.…`) o
+   pega el enlace en **📷 tengo un código**. Mostrará un código de respuesta.
+3. En el primero: escanea o pega esa respuesta y pulsa **⇄ conectar**.
+
+Al conectarse se combinan los datos de ambos; mientras las dos pestañas sigan
+abiertas, cada cambio llega al otro al instante (la barra de estado muestra
+`⇄ par`). Al cerrar una pestaña la conexión termina y hay que repetir el
+emparejamiento la próxima vez.
+
+Detalles: los códigos son la oferta y la respuesta SDP comprimidas
+(`deflate-raw` + base64url, ~600 caracteres); el navegador usa servidores STUN
+públicos (Google, Cloudflare) solo para descubrir la dirección de red. Funciona
+mejor con ambos en la **misma red Wi-Fi**; entre redes distintas puede fallar
+tras NAT estrictos (redes móviles o corporativas), porque no hay servidor TURN
+de relevo. En ese caso usa el gist.
+
+### Gist de GitHub
+
+Sincroniza en segundo plano sin tener los dispositivos abiertos a la vez:
+
+1. Crea un token clásico con solo el permiso **gist** (el enlace de la app ya
+   lo trae marcado) y pégalo en **conectar**.
+2. La app crea un gist **secreto** `dle-tracker.json` en tu cuenta y lo usa
+   desde todos los dispositivos donde pegues el mismo token.
+3. Sincroniza al abrir la app, al volver a la pestaña y unos segundos después
+   de cada cambio.
+
+El token se guarda solo en ese navegador y únicamente puede leer y escribir
+tus gists. Puedes revocarlo cuando quieras en GitHub.
+
+### Cómo se combinan los datos
+
+Cada juego tiene un `uid` estable y cada partida se identifica por juego + día.
+Si un registro cambió en los dos lados gana el más reciente (`updated_at`), y
+los borrados viajan como «lápidas» (se guardan 180 días) para que no
+reaparezcan. Juegos con el mismo nombre creados por separado se unen, y un
+dispositivo recién estrenado (solo con los juegos de ejemplo) adopta los datos
+del otro sin duplicarlos.
 
 ## Catálogo
 
@@ -146,7 +199,9 @@ npm test        # o: node --test tests/*.test.js
 
 Cubren las rachas (días consecutivos, varios juegos el mismo día, huecos,
 cambios de mes/año, bisiestos, racha viva si se jugó ayer), el lector de
-resultados compartidos, el catálogo (caché, sin conexión), estadísticas,
+resultados compartidos, el catálogo (caché, sin conexión), la combinación de
+datos al sincronizar, la sincronización con gist (GitHub simulado), el
+emparejamiento WebRTC (códigos y protocolo con canales simulados), estadísticas,
 tendencia, semana, calendario, CRUD de juegos y partidas, validaciones,
 persistencia al recargar, datos corruptos, exportar/importar e iconos.
 
@@ -159,10 +214,12 @@ static/
 ├── js/logic.js        # Rachas y estadísticas (funciones puras)
 ├── js/store.js        # Datos en localStorage + mini API con validación
 ├── js/catalog.js      # Catálogo de dles.aukspot.com (descarga y caché)
+├── js/sync.js         # Combinar datos + sincronización con gist de GitHub
+├── js/pair.js         # Emparejar dispositivos por WebRTC (QR)
 ├── js/mascot.js       # Bit, la mascota en pixel art (SVG)
 ├── js/app.js          # Interfaz: rutas por hash (#/dashboard, #/game/1, …)
 ├── icons/             # Iconos de la app (PWA)
-└── vendor/            # Chart.js y la fuente JetBrains Mono (OFL)
+└── vendor/            # Chart.js, qrcode-generator (MIT) y JetBrains Mono (OFL)
 manifest.webmanifest   # App instalable
 sw.js                  # Service worker (sin conexión)
 tests/                 # node --test
@@ -187,6 +244,9 @@ Un único objeto JSON en `localStorage`:
                  "notes": "", "created_at": "…" }]
 }
 ```
+
+Para sincronizar, cada juego lleva además `uid` y `updated_at`, cada partida
+`updated_at`, y el objeto guarda `tombstones` (borrados recientes).
 
 Reglas: nombre de juego obligatorio y único (sin distinguir mayúsculas); URL
 `http(s)`; la métrica principal debe estar entre las registradas; una partida

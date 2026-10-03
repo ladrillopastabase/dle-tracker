@@ -208,6 +208,15 @@
     </form>
   </dialog>
 
+  <!-- Emparejar dispositivos (WebRTC) -->
+  <dialog id="pair-dialog" class="modal pair-modal" aria-labelledby="pair-title">
+    <header class="modal-head">
+      <h2 id="pair-title">emparejar dispositivos</h2>
+      <button type="button" class="icon-btn" data-close aria-label="Cerrar">[x]</button>
+    </header>
+    <div id="pair-body" aria-live="polite"></div>
+  </dialog>
+
   <!-- Paleta de comandos (":" o Ctrl+K) -->
   <dialog id="palette" class="modal palette" aria-label="Paleta de comandos">
     <div class="palette-input"><span class="accent">:</span>
@@ -224,6 +233,9 @@
   <script src="static/js/logic.js"></script>
   <script src="static/js/store.js"></script>
   <script src="static/js/catalog.js"></script>
+  <script src="static/js/sync.js"></script>
+  <script src="static/vendor/qrcode.js"></script>
+  <script src="static/js/pair.js"></script>
   <script src="static/js/mascot.js"></script>
   <script src="static/js/app.js"></script>
 </body>

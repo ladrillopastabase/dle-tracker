@@ -174,11 +174,40 @@
   /* ------------------------------------------------------------- store */
 
   function emptyData() {
-    return { version: VERSION, seq: { game: 0, session: 0 }, games: [], sessions: [] };
+    return { version: VERSION, seq: { game: 0, session: 0 }, games: [], sessions: [], tombstones: [] };
   }
 
   function nowISO() {
     return new Date().toISOString().slice(0, 19);
+  }
+
+  /** Marca de tiempo completa (UTC, con milisegundos) para resolver conflictos al sincronizar. */
+  function stamp() {
+    return new Date().toISOString();
+  }
+
+  /** Identificador estable de un juego entre dispositivos. */
+  function newUid() {
+    const bytes = new Uint8Array(9);
+    if (typeof crypto !== "undefined" && crypto.getRandomValues) crypto.getRandomValues(bytes);
+    else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+    return [...bytes].map((b) => b.toString(36).padStart(2, "0")).join("").slice(0, 14);
+  }
+
+  /** Completa campos de versiones anteriores. Devuelve true si cambió algo. */
+  function normalize(data) {
+    let changed = false;
+    if (!Array.isArray(data.tombstones)) { data.tombstones = []; changed = true; }
+    for (const g of data.games) {
+      g.favorite = g.favorite === true;
+      if (!Array.isArray(g.days)) g.days = null;
+      if (!g.uid) { g.uid = newUid(); changed = true; }
+      if (!g.updated_at) { g.updated_at = `${g.created_at || "1970-01-01T00:00:00"}Z`.replace(/ZZ$/, "Z"); changed = true; }
+    }
+    for (const x of data.sessions) {
+      if (!x.updated_at) { x.updated_at = `${x.created_at || "1970-01-01T00:00:00"}Z`.replace(/ZZ$/, "Z"); changed = true; }
+    }
+    return changed;
   }
 
   /**
@@ -187,7 +216,8 @@
    * @param options.today función que devuelve la fecha de hoy (ISO)
    */
   function create(storage, { seed = true, today = () => L.localToday() } = {}) {
-    let data = load();
+    let data = null;
+    data = load();
 
     function load() {
       let raw = null;
@@ -200,11 +230,9 @@
         try {
           const parsed = JSON.parse(raw);
           if (parsed && Array.isArray(parsed.games) && Array.isArray(parsed.sessions)) {
-            // Campos añadidos en versiones posteriores.
-            for (const g of parsed.games) {
-              g.favorite = g.favorite === true;
-              if (!Array.isArray(g.days)) g.days = null;
-            }
+            // Campos añadidos en versiones posteriores (uid, updated_at…): se guardan
+            // enseguida para que el uid no cambie en cada carga.
+            if (normalize(parsed)) save(parsed);
             return parsed;
           }
         } catch {
@@ -214,16 +242,19 @@
       const fresh = emptyData();
       if (seed && raw === null) {
         for (const g of SEED_GAMES) {
-          const game = { ...GAME_DEFAULTS, ...g, id: ++fresh.seq.game, created_at: nowISO() };
+          const game = { ...GAME_DEFAULTS, ...g, id: ++fresh.seq.game, uid: newUid(), created_at: nowISO(), updated_at: stamp() };
           game.icon_url = iconCandidates(game.url)[0] || null;
           fresh.games.push(game);
         }
+        // Datos recién creados: al conectar la sincronización se reemplazan por los de la nube.
+        fresh.pristine = true;
         save(fresh);
       }
       return fresh;
     }
 
     function save(value = data) {
+      if (value === data) data.pristine = false;
       try {
         storage.setItem(STORAGE_KEY, JSON.stringify(value));
       } catch (err) {
@@ -252,7 +283,9 @@
       if (data.games.length >= MAX_GAMES) fail(422, `Máximo ${MAX_GAMES} juegos`);
       const game = mergeGame(GAME_DEFAULTS, body || {});
       game.id = data.seq.game + 1;
+      game.uid = newUid();
       game.created_at = nowISO();
+      game.updated_at = stamp();
       game.icon_url = iconCandidates(game.url)[0] || null;
       checkUniqueName(game);
       data.seq.game = game.id;
@@ -267,6 +300,7 @@
       checkUniqueName(game);
       // El icono dependía de la URL anterior.
       if (game.url !== current.url) game.icon_url = iconCandidates(game.url)[0] || null;
+      game.updated_at = stamp();
       Object.assign(current, game);
       save();
       return current;
@@ -276,8 +310,14 @@
       const game = gameOr404(id);
       data.games = data.games.filter((g) => g !== game);
       data.sessions = data.sessions.filter((s) => s.game_id !== game.id);
+      data.tombstones.push({ kind: "game", uid: game.uid, name: game.name, at: stamp() });
       save();
       return null;
+    }
+
+    function sessionTombstone(session) {
+      const game = data.games.find((g) => g.id === session.game_id);
+      if (game) data.tombstones.push({ kind: "session", game_uid: game.uid, played_at: session.played_at, at: stamp() });
     }
 
     /* -------------------------------------------------------- partidas */
@@ -305,6 +345,7 @@
       const session = mergeSession(base, body, today());
       session.id = data.seq.session + 1;
       session.created_at = nowISO();
+      session.updated_at = stamp();
       checkUniqueDay(session);
       data.seq.session = session.id;
       data.sessions.push(session);
@@ -319,6 +360,9 @@
       const session = mergeSession(current, body, today());
       session.game_id = Number(session.game_id);
       checkUniqueDay(session);
+      // Si cambia el juego o la fecha, la "clave" anterior deja de existir en los otros dispositivos.
+      if (session.game_id !== current.game_id || session.played_at !== current.played_at) sessionTombstone(current);
+      session.updated_at = stamp();
       Object.assign(current, session);
       save();
       return { ...current };
@@ -327,6 +371,7 @@
     function deleteSession(id) {
       const session = sessionOr404(id);
       data.sessions = data.sessions.filter((s) => s !== session);
+      sessionTombstone(session);
       save();
       return null;
     }
@@ -366,7 +411,9 @@
           fail(422, `Juego repetido en el archivo: «${game.name}»`);
         }
         game.id = ++next.seq.game;
+        game.uid = typeof raw.uid === "string" && raw.uid ? raw.uid : newUid();
         game.created_at = typeof raw.created_at === "string" ? raw.created_at : nowISO();
+        game.updated_at = stamp();
         // Las URLs de icono del servidor (/api/...) no sirven aquí: se recalculan.
         game.icon_url = typeof raw.icon_url === "string" && /^https:\/\//.test(raw.icon_url)
           ? raw.icon_url : iconCandidates(game.url)[0] || null;
@@ -392,10 +439,55 @@
         seen.add(key);
         session.id = ++next.seq.session;
         session.created_at = typeof raw.created_at === "string" ? raw.created_at : nowISO();
+        session.updated_at = stamp();
         next.sessions.push(session);
       }
       save(next);
       data = next;
+      return { games: next.games.length, sessions: next.sessions.length };
+    }
+
+    /* ---------------------------------------------------- sincronización */
+
+    /**
+     * Formato que se sube a la nube: sin ids locales; las partidas apuntan al
+     * `uid` del juego. Así dos dispositivos pueden combinar sus datos.
+     */
+    function toPortable() {
+      const uidOf = new Map(data.games.map((g) => [g.id, g.uid]));
+      return {
+        app: "dle-tracker",
+        format: 2,
+        games: data.games.map(({ id, ...g }) => ({ ...g })),
+        sessions: data.sessions.map(({ id, game_id, ...x }) => ({ ...x, game_uid: uidOf.get(game_id) })).filter((x) => x.game_uid),
+        tombstones: data.tombstones.map((t) => ({ ...t })),
+        pristine: data.pristine === true,
+      };
+    }
+
+    /** Reemplaza los datos locales por un estado combinado, conservando los ids locales. */
+    function applyPortable(p) {
+      const next = emptyData();
+      next.seq = { ...data.seq };
+      const localGame = new Map(data.games.map((g) => [g.uid, g]));
+      const idOfUid = new Map();
+      for (const raw of p.games) {
+        const id = localGame.get(raw.uid)?.id ?? ++next.seq.game;
+        idOfUid.set(raw.uid, id);
+        next.games.push({ ...GAME_DEFAULTS, ...raw, id });
+      }
+      const localSession = new Map(data.sessions.map((x) => [`${data.games.find((g) => g.id === x.game_id)?.uid}|${x.played_at}`, x]));
+      for (const raw of p.sessions) {
+        const gameId = idOfUid.get(raw.game_uid);
+        if (gameId === undefined) continue;
+        const { game_uid, ...rest } = raw;
+        const id = localSession.get(`${game_uid}|${raw.played_at}`)?.id ?? ++next.seq.session;
+        next.sessions.push({ ...rest, id, game_id: gameId });
+      }
+      next.tombstones = (p.tombstones || []).map((t) => ({ ...t }));
+      next.pristine = false;
+      data = next;
+      save();
       return { games: next.games.length, sessions: next.sessions.length };
     }
 
@@ -479,7 +571,7 @@
       fail(404, "Ruta no encontrada");
     }
 
-    return { request, exportData, importData, reset, iconCandidates };
+    return { request, exportData, importData, reset, iconCandidates, toPortable, applyPortable };
   }
 
   /** Almacenamiento en memoria, por si localStorage no está disponible. */

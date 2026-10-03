@@ -306,14 +306,51 @@ const STORAGE = (() => {
 })();
 const store = DleStore.create(STORAGE);
 
+/* Sincronización opcional entre dispositivos (gist secreto de GitHub). */
+const sync = DleSync.create({
+  storage: STORAGE,
+  store,
+  onChange: () => {
+    toast("datos sincronizados desde otro dispositivo");
+    if (!document.querySelector("dialog[open]") && !state.roulette.spinning) refresh();
+  },
+  onStatus: () => updateStatusBar(),
+});
+
 /** Misma interfaz que la antigua API REST, pero resuelta en el navegador. */
 async function api(path, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+  let result;
   try {
-    return store.request(options.method || "GET", path, options.body);
+    result = store.request(method, path, options.body);
   } catch (err) {
     throw new Error(err.message);
   }
+  if (method !== "GET") {
+    sync.schedule(); // sube el cambio al gist unos segundos después
+    pair.notifyLocalChange(); // y al dispositivo emparejado, si hay conexión abierta
+  }
+  return result;
 }
+
+/* Emparejamiento directo entre dispositivos (WebRTC, sin servidor). */
+const pairUi = { mode: null, busy: false, error: null };
+const pair = DlePair.create({
+  store,
+  onStatus: () => { renderPairDialog(); updateStatusBar(); },
+  onChange: () => {
+    toast("datos recibidos del dispositivo emparejado");
+    if (!document.querySelector("dialog[open]:not(#pair-dialog)") && !state.roulette.spinning) refresh();
+  },
+});
+
+let lastAutoSync = 0;
+function autoSync() {
+  if (!sync.status().connected || Date.now() - lastAutoSync < 20000) return;
+  lastAutoSync = Date.now();
+  sync.syncNow().catch(() => {});
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") autoSync(); });
 
 async function loadGames() {
   state.games = await api("/api/games");
@@ -374,9 +411,15 @@ function updateStatusBar() {
   const now = new Date();
   const hhmm = now.toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" });
   const o = state.overview;
+  const st = sync.status();
+  const syncLabel = (pair.status().open ? "⇄ par | " : "")
+    + (!st.connected ? "" : st.syncing ? "⇅ … | " : st.lastError ? "⇅ ! | " : "⇅ ok | ");
   $("#status-right").textContent = o
-    ? `racha ${o.current_streak}d | hoy ${o.played_today}/${o.today_total} | ${hhmm}`
-    : hhmm;
+    ? `${syncLabel}racha ${o.current_streak}d | hoy ${o.played_today}/${o.today_total} | ${hhmm}`
+    : `${syncLabel}${hhmm}`;
+  $("#status-right").title = st.connected
+    ? (st.lastError ? `Sincronización: ${st.lastError}` : `Sincronizado${st.lastSync ? ` ${new Date(st.lastSync).toLocaleTimeString("es")}` : ""}`)
+    : "";
   $("#clock").textContent = `${state.today} ${hhmm}`;
 }
 setInterval(updateStatusBar, 30000);
@@ -533,6 +576,12 @@ const afterRender = {};
 
 async function router() {
   let [name = "dashboard", param] = location.hash.replace(/^#\/?/, "").split("/");
+  // Enlace del QR de emparejamiento: #/pair/DLE1.xxxx → unirse desde configuración.
+  if (name === "pair") {
+    history.replaceState(null, "", "#/settings");
+    name = "settings";
+    if (param) setTimeout(() => openPair("join", decodeURIComponent(param)), 0);
+  }
   if (!routes[name]) name = "dashboard";
   state.route = name;
   const navName = name === "game" ? "games" : name;
@@ -1756,6 +1805,8 @@ async function renderSettings() {
           <label class="field">nombre en el prompt
             <input id="user-input" maxlength="20" value="${esc(userName())}" autocomplete="off" spellcheck="false">
           </label>`)}
+        ${pairPane()}
+        ${syncPane()}
         ${pane("datos", `
           <p class="dim small">Tus juegos y partidas se guardan <b>solo en este navegador</b> (localStorage).
           Exporta una copia para no perderlos o para pasarlos a otro dispositivo.</p>
@@ -1780,7 +1831,282 @@ async function renderSettings() {
     </div>`;
 }
 
+/* ================================================================ emparejar (WebRTC) */
+
+function pairPane() {
+  const st = pair.status();
+  const live = st.open
+    ? `<p class="c-win small">● conectado con otro dispositivo${st.at ? ` · sincronizado ${new Date(st.at).toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" })}` : ""}</p>`
+    : "";
+  return pane("emparejar dispositivos", `
+    <p class="dim small">Conecta tu computador y tu celular <b>directamente</b> (WebRTC): sin cuentas ni servidores, los datos
+      van de un dispositivo al otro y se combinan. Funciona mejor con ambos en la misma red Wi-Fi.</p>
+    <ol class="steps small">
+      <li>En un dispositivo pulsa <b>mostrar código</b>: aparece un QR.</li>
+      <li>Escanéalo con la cámara del otro (o abre el enlace) y te dará un código de respuesta.</li>
+      <li>Pega o escanea esa respuesta en el primero. Listo: mientras las dos pestañas sigan abiertas, los cambios viajan al instante.</li>
+    </ol>
+    ${live}
+    <div class="card-actions">
+      <button class="btn primary" data-pair="host">📡 mostrar código</button>
+      <button class="btn" data-pair="join">📷 tengo un código</button>
+      ${st.open ? '<button class="btn danger" data-pair="close">cerrar conexión</button>' : ""}
+    </div>`, { aside: st.open ? '<span class="c-win">●</span>' : "" });
+}
+
+function qrSvg(text) {
+  try {
+    const qr = qrcode(0, "L");
+    qr.addData(text);
+    qr.make();
+    return qr.createSvgTag({ cellSize: 4, margin: 4, scalable: true });
+  } catch {
+    return '<p class="muted small">(código demasiado largo para QR: usa copiar)</p>';
+  }
+}
+
+const canScan = () => "BarcodeDetector" in window && !!navigator.mediaDevices?.getUserMedia;
+
+function pairLink(code) {
+  return `${location.origin}${location.pathname}#/pair/${code}`;
+}
+
+function shareButtons(text, label) {
+  return `<div class="card-actions">
+      <button class="btn primary" data-pair-copy="${esc(text)}">⧉ copiar ${label}</button>
+      ${navigator.share ? `<button class="btn" data-pair-share="${esc(text)}">↗ compartir</button>` : ""}
+    </div>`;
+}
+
+function pasteBox(id, placeholder, action, actionLabel) {
+  return `<div class="pair-paste">
+      <textarea id="${id}" rows="3" placeholder="${placeholder}" spellcheck="false" autocomplete="off"></textarea>
+      <div class="card-actions">
+        <button class="btn primary" data-pair="${action}">${actionLabel}</button>
+        <button class="btn" data-pair-paste="${id}">📋 pegar</button>
+        ${canScan() ? `<button class="btn" data-pair-scan="${id}">📷 escanear QR</button>` : ""}
+      </div>
+      <div class="pair-scan" id="${id}-scan" hidden><video playsinline muted></video><p class="muted small">apunta al QR del otro dispositivo…</p></div>
+    </div>`;
+}
+
+function renderPairDialog() {
+  const body = $("#pair-body");
+  if (!body || !$("#pair-dialog").open) return;
+  const st = pair.status();
+  const err = pairUi.error ? `<div class="form-error" role="alert">${esc(pairUi.error)}</div>` : "";
+  let html;
+  if (pairUi.busy) {
+    html = `<div class="pair-wait"><span data-mascot="spin" data-scale="5"></span><p>preparando la conexión<span class="cursor"></span></p></div>`;
+  } else if (st.phase === "synced") {
+    html = `<div class="pair-wait"><span data-mascot="happy" data-scale="6"></span>
+      <div><p class="c-win"><b>✓ dispositivos conectados</b></p>
+      <p class="dim small">Sincronizado: ${st.games} juego(s) y ${st.sessions} partida(s). Mientras ambas pestañas sigan
+        abiertas, cada cambio se envía al otro dispositivo al instante.</p></div></div>
+      <div class="card-actions"><button class="btn" data-close>listo</button><button class="btn danger" data-pair="close">cerrar conexión</button></div>`;
+  } else if (st.phase === "connecting") {
+    html = `<div class="pair-wait"><span data-mascot="spin" data-scale="5"></span><p>conectando y sincronizando<span class="cursor"></span></p></div>`;
+  } else if (st.phase === "offering" && pairUi.mode === "host") {
+    html = `${err}
+      <p class="pair-step"><b>1.</b> En el otro dispositivo, escanea este QR con la cámara (o abre el enlace):</p>
+      <div class="qr">${qrSvg(pairLink(st.code))}</div>
+      ${shareButtons(pairLink(st.code), "enlace")}
+      <p class="pair-step"><b>2.</b> Te dará un código de respuesta. Pégalo o escanéalo aquí:</p>
+      ${pasteBox("pair-answer", "DLE1.…", "accept", "⇄ conectar")}`;
+  } else if (st.phase === "answering") {
+    html = `${err}
+      <p class="pair-step">Ahora muestra este código en el <b>primer dispositivo</b>: escanéalo desde allí o cópialo y pégalo.</p>
+      <div class="qr">${qrSvg(st.code)}</div>
+      ${shareButtons(st.code, "código")}
+      <p class="muted small">Esperando a que el otro dispositivo lo use… deja esta pestaña abierta.</p>`;
+  } else if (pairUi.mode === "join") {
+    html = `${err}
+      <p class="pair-step">Pega el enlace o código que muestra el otro dispositivo (o escanea su QR):</p>
+      ${pasteBox("pair-offer", "https://…#/pair/DLE1.… o DLE1.…", "join", "continuar")}`;
+  } else {
+    html = `${err}${st.phase === "closed" ? '<p class="muted">La conexión se cerró.</p>' : ""}
+      <div class="card-actions"><button class="btn primary" data-pair="host">📡 mostrar código</button>
+      <button class="btn" data-pair="join">📷 tengo un código</button></div>`;
+  }
+  body.innerHTML = html;
+  Mascot.mountAll(body);
+}
+
+async function openPair(mode, code = null) {
+  pairUi.mode = mode;
+  pairUi.error = null;
+  const dialog = $("#pair-dialog");
+  if (!dialog.open) dialog.showModal();
+  if (mode === "host" || code) {
+    pairUi.busy = true;
+    renderPairDialog();
+    try {
+      if (mode === "host") await pair.host();
+      else await pair.join(code);
+    } catch (err) {
+      pairUi.error = err.message;
+      if (mode === "join") pair.close({ silent: true });
+    }
+    pairUi.busy = false;
+  }
+  renderPairDialog();
+}
+
+let scanStream = null;
+function stopScan() {
+  scanStream?.getTracks().forEach((t) => t.stop());
+  scanStream = null;
+}
+
+/** Lee un QR con la cámara (BarcodeDetector) y lo pone en el campo indicado. */
+async function startScan(inputId, onCode) {
+  const box = $(`#${inputId}-scan`);
+  const video = box.querySelector("video");
+  try {
+    scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+  } catch {
+    toast("no se pudo usar la cámara", "error");
+    return;
+  }
+  box.hidden = false;
+  video.srcObject = scanStream;
+  await video.play().catch(() => {});
+  const detector = new BarcodeDetector({ formats: ["qr_code"] });
+  const loop = async () => {
+    if (!scanStream || !$("#pair-dialog").open) return stopScan();
+    try {
+      const [hit] = await detector.detect(video);
+      if (hit?.rawValue && /DLE[01]\./.test(hit.rawValue)) {
+        stopScan();
+        $(`#${inputId}`).value = hit.rawValue;
+        return onCode(hit.rawValue);
+      }
+    } catch { /* cuadro sin QR */ }
+    setTimeout(loop, 250);
+  };
+  loop();
+}
+
+async function pairAction(action) {
+  pairUi.error = null;
+  if (action === "host" || action === "join") return openPair(action);
+  if (action === "close") {
+    pair.close();
+    pairUi.mode = null;
+    renderPairDialog();
+    if (state.route === "settings") refresh();
+    return;
+  }
+  if (action === "accept") {
+    try {
+      await pair.acceptAnswer($("#pair-answer").value);
+    } catch (err) {
+      pairUi.error = err.message;
+      renderPairDialog();
+    }
+    return;
+  }
+  if (action === "joinCode") return openPair("join", $("#pair-offer").value);
+}
+
+$("#pair-dialog").addEventListener("click", async (e) => {
+  const t = e.target.closest("button");
+  if (!t) return;
+  const d = t.dataset;
+  if (d.pair === "join" && $("#pair-offer")) return openPair("join", $("#pair-offer").value);
+  if (d.pair) return pairAction(d.pair);
+  if (d.pairCopy) return toast(await copyText(d.pairCopy) ? "copiado" : "no se pudo copiar");
+  if (d.pairShare) return navigator.share({ title: "dle_tracker", text: d.pairShare }).catch(() => {});
+  if (d.pairPaste) {
+    try {
+      $(`#${d.pairPaste}`).value = await navigator.clipboard.readText();
+    } catch {
+      toast("pega el código con Ctrl+V / mantener pulsado", "error");
+    }
+    return;
+  }
+  if (d.pairScan) {
+    const id = d.pairScan;
+    return startScan(id, (code) => (id === "pair-offer" ? openPair("join", code) : pairAction("accept")));
+  }
+});
+$("#pair-dialog").addEventListener("close", () => {
+  stopScan();
+  if (state.route === "settings") refresh();
+});
+
+function syncPane() {
+  const st = sync.status();
+  if (!st.connected) {
+    return pane("sincronizar dispositivos", `
+      <p class="dim small">Ten los mismos juegos y registros en tu computador y tu celular, gratis, usando un
+        <b>gist secreto</b> de tu cuenta de GitHub.</p>
+      <ol class="steps small">
+        <li><a href="${DleSync.TOKEN_URL}" target="_blank" rel="noopener noreferrer">Crea un token en GitHub ↗</a>
+          con solo el permiso <b>gist</b> (ya viene marcado), elige la caducidad y pulsa «Generate token». Cópialo.</li>
+        <li>Pégalo aquí y pulsa conectar.</li>
+        <li>En tus otros dispositivos abre esta página y pega <b>el mismo token</b>.</li>
+      </ol>
+      <form id="sync-form" class="sync-form" novalidate>
+        <div class="form-error" role="alert" hidden></div>
+        <input type="password" id="sync-token" placeholder="ghp_… o github_pat_…" autocomplete="off" spellcheck="false" aria-label="Token de GitHub">
+        <button class="btn primary" type="submit">⇅ conectar</button>
+      </form>
+      <p class="muted small">El token se guarda solo en este navegador y únicamente permite manejar tus gists.
+        El gist no aparece en tu perfil, pero quien tenga su enlace podría leerlo.</p>`);
+  }
+  const when = st.lastSync ? new Date(st.lastSync).toLocaleString("es", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "nunca";
+  return pane("sincronizar dispositivos", `
+    ${kv([
+      ["cuenta", `@${esc(st.login)}`],
+      ["estado", st.lastError ? `<span class="c-loss">error: ${esc(st.lastError)}</span>` : '<span class="c-win">conectado ✓</span>'],
+      ["última vez", esc(when)],
+      ["gist", `<a href="https://gist.github.com/${esc(st.login)}/${esc(st.gistId)}" target="_blank" rel="noopener noreferrer">ver en GitHub ↗</a>`],
+    ])}
+    <p class="muted small">Se sincroniza solo al abrir la página, al volver a ella y unos segundos después de cada cambio.</p>
+    <div class="card-actions">
+      <button class="btn primary" id="sync-now">⇅ sincronizar ahora</button>
+      <button class="btn danger" id="sync-disconnect">desconectar este dispositivo</button>
+    </div>`, { aside: '<span class="c-win">●</span>' });
+}
+
 afterRender.settings = () => {
+  const syncForm = $("#sync-form");
+  syncForm?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const button = syncForm.querySelector("button");
+    button.disabled = true;
+    button.textContent = "conectando…";
+    showFormError(syncForm, "");
+    try {
+      const r = await sync.connect($("#sync-token").value);
+      toast(r.created ? "listo: se creó tu gist de sincronización" : `conectado como @${r.login}: datos combinados`);
+      refresh();
+    } catch (err) {
+      sync.disconnect();
+      showFormError(syncForm, err.message);
+      button.disabled = false;
+      button.textContent = "⇅ conectar";
+    }
+  });
+  $("#sync-now")?.addEventListener("click", async (e) => {
+    e.target.disabled = true;
+    try {
+      const r = await sync.syncNow();
+      toast(r.pulled || r.pushed ? "sincronizado" : "ya estaba todo al día");
+    } catch (err) {
+      toast(err.message, "error");
+    }
+    refresh();
+  });
+  $("#sync-disconnect")?.addEventListener("click", async () => {
+    const ok = await confirmDialog("desconectar", "Este dispositivo dejará de sincronizarse. Tus datos se quedan aquí y en el gist.", "desconectar");
+    if (!ok) return;
+    sync.disconnect();
+    toast("sincronización desconectada");
+    refresh();
+  });
+
   $("#theme-picker").addEventListener("change", (e) => applyTheme(e.target.value));
   $("#accent-picker").addEventListener("click", (e) => {
     const b = e.target.closest("[data-accent]");
@@ -2306,6 +2632,7 @@ document.addEventListener("click", async (e) => {
     else if (d.editSession) await openSessionForm({ session: await api(`/api/sessions/${d.editSession}`) });
     else if (d.deleteSession) await deleteSession(d.deleteSession);
     else if ("spinLink" in d) state.roulette.autoSpin = true;
+    else if (d.pair && !t.closest("#pair-dialog")) await pairAction(d.pair);
     else if (d.quicklog) {
       t.disabled = true;
       await quickLog(Number(d.quicklog), d.value);
@@ -2541,6 +2868,7 @@ if ("serviceWorker" in navigator && (location.protocol === "https:" || location.
 }
 
 Mascot.mountAll(document.querySelector(".sidebar"));
+autoSync();
 updateStatusBar();
 if (!location.hash) history.replaceState(null, "", "#/dashboard");
 router();
