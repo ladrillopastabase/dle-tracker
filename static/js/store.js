@@ -112,7 +112,7 @@
   }
 
   const GAME_DEFAULTS = {
-    name: "", description: "", url: null, category: "", icon: "🎮", active: true, favorite: false,
+    name: "", description: "", url: null, category: "", icon: "🎮", active: true, favorite: false, days: null,
     track_attempts: true, track_score: false, track_time: false, track_errors: false,
     primary_metric: "attempts", lower_is_better: true,
   };
@@ -127,6 +127,16 @@
     if ("url" in changes) game.url = cleanUrl(changes.url);
     for (const key of ["active", "favorite", "track_attempts", "track_score", "track_time", "track_errors", "lower_is_better"]) {
       if (key in changes && changes[key] !== null) game[key] = cleanBool(changes[key], key);
+    }
+    if ("days" in changes) {
+      const days = changes.days;
+      if (days === null || (Array.isArray(days) && (days.length === 0 || days.length === 7))) {
+        game.days = null; // todos los días
+      } else if (Array.isArray(days) && days.every((d) => Number.isInteger(d) && d >= 0 && d <= 6)) {
+        game.days = [...new Set(days)].sort((a, b) => a - b);
+      } else {
+        fail(422, "Días debe ser una lista de días de la semana (0 = lunes … 6 = domingo)");
+      }
     }
     if ("primary_metric" in changes && changes.primary_metric !== null) {
       if (!METRICS.includes(changes.primary_metric)) fail(422, `Métrica principal debe ser una de: ${METRICS.join(", ")}`);
@@ -191,7 +201,10 @@
           const parsed = JSON.parse(raw);
           if (parsed && Array.isArray(parsed.games) && Array.isArray(parsed.sessions)) {
             // Campos añadidos en versiones posteriores.
-            for (const g of parsed.games) g.favorite = g.favorite === true;
+            for (const g of parsed.games) {
+              g.favorite = g.favorite === true;
+              if (!Array.isArray(g.days)) g.days = null;
+            }
             return parsed;
           }
         } catch {

@@ -224,3 +224,13 @@ test("favoritos: por defecto no, se guardan y se exportan", () => {
   storage.setItem(DleStore.STORAGE_KEY, JSON.stringify(raw));
   assert.equal(setup({ storage }).call("GET", "/api/games")[0].favorite, false);
 });
+
+test("días de la semana por juego: validación y normalización", () => {
+  const { call } = setup();
+  const g = call("POST", "/api/games", { name: "Semana", days: [4, 0, 0, 2] });
+  assert.deepEqual(g.days, [0, 2, 4]);
+  assert.equal(call("PUT", `/api/games/${g.id}`, { days: [0, 1, 2, 3, 4, 5, 6] }).days, null);
+  assert.equal(call("PUT", `/api/games/${g.id}`, { days: [] }).days, null);
+  for (const bad of [[7], [-1], ["lunes"], "0,1", [1.5]]) rejects(() => call("PUT", `/api/games/${g.id}`, { days: bad }), 422);
+  assert.equal(call("POST", "/api/games", { name: "Todos" }).days, null);
+});

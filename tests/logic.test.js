@@ -133,7 +133,8 @@ test("resumen global: días, no partidas, para la racha", () => {
   assert.equal(o.losses, 1);
   assert.equal(o.current_streak, 3);
   assert.equal(o.best_streak, 3);
-  assert.deepEqual(o.achievements.filter((a) => a.unlocked).map((a) => a.key), ["first_game"]);
+  // Los dos juegos activos se jugaron hoy: también es un día perfecto.
+  assert.deepEqual(o.achievements.filter((a) => a.unlocked).map((a) => a.key), ["first_game", "perfect_1"]);
   assert.equal(o.games.find((g) => g.game_id === 2).current_streak, 1);
 });
 
@@ -187,4 +188,63 @@ test("parseShare: tiempo, puntaje y palabras clave", () => {
   assert.equal(L.parseShare("¡Gané!").result, "win");
   assert.deepEqual(L.parseShare(""), {});
   assert.deepEqual(L.parseShare(null), {});
+});
+
+/* --------------------------------------------- días programados y perfectos */
+
+test("isScheduled: días de la semana por juego", () => {
+  const weekdays = { days: [0, 1, 2, 3, 4] };
+  assert.ok(L.isScheduled(weekdays, "2026-10-05")); // lunes
+  assert.ok(!L.isScheduled(weekdays, "2026-10-04")); // domingo
+  assert.ok(L.isScheduled({ days: null }, "2026-10-04"));
+  assert.ok(L.isScheduled({}, "2026-10-04"));
+});
+
+test("hoy solo cuenta los juegos que tocan; jugar uno extra suma", () => {
+  const sunday = "2026-10-04";
+  const games = [
+    { ...wordle, id: 1, days: null },
+    { ...wordle, id: 2, name: "Lunes a viernes", days: [0, 1, 2, 3, 4] },
+    { ...wordle, id: 3, name: "Otro", days: [0] },
+  ];
+  let o = L.overview(games, [], sunday);
+  assert.deepEqual(o.pending_today, [1]);
+  assert.deepEqual(o.resting_today, [2, 3]);
+  assert.equal(o.today_total, 1);
+  o = L.overview(games, [{ ...session(0), game_id: 1, played_at: sunday }, { ...session(0), game_id: 3, played_at: sunday }], sunday);
+  assert.equal(o.played_today, 2);
+  assert.equal(o.today_total, 2);
+  assert.deepEqual(o.pending_today, []);
+  assert.ok(o.perfect_today);
+});
+
+test("días perfectos y su racha", () => {
+  const games = [{ ...wordle, id: 1 }, { ...wordle, id: 2, name: "B" }];
+  const sessions = [
+    session(0), { ...session(0), game_id: 2 }, // hoy: perfecto
+    session(1), { ...session(1), game_id: 2 }, // ayer: perfecto
+    session(2), // anteayer: falta B
+  ];
+  assert.deepEqual(L.perfectDays(games, sessions), [L.addDays(TODAY, -1), TODAY]);
+  const o = L.overview(games, sessions, TODAY);
+  assert.equal(o.perfect_days, 2);
+  assert.equal(o.perfect_streak, 2);
+  assert.ok(o.achievements.find((a) => a.key === "perfect_1").unlocked);
+  // Un juego creado después no arruina los días anteriores.
+  const later = [...games, { ...wordle, id: 3, name: "Nuevo", created_at: `${TODAY}T10:00:00` }];
+  assert.deepEqual(L.perfectDays(later, sessions), [L.addDays(TODAY, -1)]);
+});
+
+test("resumen de actividad anual", () => {
+  const sessions = [
+    { ...session(0), played_at: "2026-10-05" }, { ...session(0), played_at: "2026-10-05" }, // lunes
+    { ...session(0), played_at: "2026-10-06" }, { ...session(0), played_at: "2026-09-01" },
+  ];
+  const a = L.activitySummary(sessions, "2026-01-01", "2026-12-31");
+  assert.equal(a.sessions, 4);
+  assert.equal(a.days_played, 3);
+  assert.equal(a.best_streak, 2);
+  assert.equal(a.top_weekday, 0);
+  assert.deepEqual(a.top_month, { month: "2026-10", count: 3 });
+  assert.equal(L.activitySummary([], "2026-01-01", "2026-12-31").top_weekday, null);
 });

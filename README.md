@@ -27,8 +27,15 @@ datos se guardan en el navegador (`localStorage`), así que funciona en
 - **Pegar resultado**: al registrar, pega el texto que comparte el juego
   («Wordle 1.234 4/6», la cuadrícula de Connections, la fila de Framed, un
   tiempo «1:23», «Score: 85»…) y el formulario se rellena solo.
-- **Ruleta**: si no sabes qué jugar, gírala y elige un juego al azar
-  (solo los pendientes de hoy, o todos los activos).
+- **Ruleta tragamonedas**: una tira de tarjetas que gira y frena bajo el
+  marcador (sirve igual con 3 que con 300 juegos), con confeti y sonido
+  opcional; elige entre pendientes, todos o favoritos. **Cola del día**:
+  baraja tus pendientes y juégalos en ese orden.
+- **Paleta de comandos** (`:` o `Ctrl+K`): escribe «jugar wordle»,
+  «registrar connections», «tema amber», «ir stats»… y Enter.
+- **Días de la semana por juego**: marca qué días juegas cada uno (p. ej. solo
+  laborables); los demás días aparece como «descansa hoy» y no cuenta como pendiente.
+- **Días perfectos**: los días en que jugaste todo lo que tocaba, con su racha.
 - **Juegos**: agregar, editar, desactivar o eliminar (con confirmación). Cada
   juego elige qué métricas registra (intentos, errores, puntaje, tiempo).
 - **Iconos automáticos**: al poner la URL de un juego se usa el icono de su
@@ -37,14 +44,16 @@ datos se guardan en el navegador (`localStorage`), así que funciona en
   evolución con media móvil, tendencia, distribución e historial reciente.
 - **Historial**: filtros por juego, resultado y fechas; orden; editar y eliminar.
 - **Estadísticas**: partidas por día, victorias/derrotas, **mapa de actividad
-  del último año** (estilo GitHub), evolución por juego y tabla comparativa.
+  del último año** (estilo GitHub, ocupa todo el ancho) con días jugados, racha
+  más larga, día de la semana favorito y mes más activo; evolución por juego y
+  tabla comparativa. **11 logros** (días perfectos, coleccionista, explorador…).
 - **Calendario**: días jugados del mes; al elegir un día se ven sus partidas.
 - **Personalización**: temas *phosphor*, *amber* y *paper* (claro) o según el
   sistema; **color de acento** (8 predefinidos o cualquiera); scanlines;
   mostrar u ocultar a Bit; tarjetas completas o compactas; nombre del prompt.
 - **Datos**: exportar / importar JSON y borrar todo.
-- **Atajos de teclado**: `1`–`8` navegan, `/` busca juegos nuevos, `r` gira la
-  ruleta, `n` registra una partida, `Esc` cierra.
+- **Atajos de teclado**: `:` o `Ctrl+K` comandos, `1`–`8` navegan, `/` busca
+  juegos nuevos, `r` gira la ruleta, `n` registra una partida, `Esc` cierra.
 - **App instalable (PWA)**: en el móvil, «Añadir a pantalla de inicio»; funciona
   sin conexión gracias a un *service worker*. Responsive.
 
@@ -158,6 +167,7 @@ Un único objeto JSON en `localStorage`:
   "seq": { "game": 5, "session": 12 },
   "games": [{ "id": 1, "name": "Wordle", "url": "https://…", "category": "Palabras",
               "icon": "🟩", "icon_url": "https://…/apple-touch-icon.png", "active": true, "favorite": false,
+              "days": null,
               "track_attempts": true, "track_errors": false, "track_score": false, "track_time": false,
               "primary_metric": "attempts", "lower_is_better": true, "created_at": "…" }],
   "sessions": [{ "id": 1, "game_id": 1, "played_at": "2026-10-02", "result": "win",

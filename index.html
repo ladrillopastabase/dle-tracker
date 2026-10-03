@@ -52,7 +52,7 @@
         <a class="nav-link" href="#/stats" data-route="stats"><kbd>6</kbd><span>stats</span></a>
         <a class="nav-link" href="#/calendar" data-route="calendar"><kbd>7</kbd><span>calendario</span></a>
         <a class="nav-link nav-settings" href="#/settings" data-route="settings"><kbd>8</kbd><span>config</span></a>
-        <p class="nav-help muted small">[n] nueva partida<br>[r] girar ruleta<br>[/] buscar juegos</p>
+        <p class="nav-help muted small">[:] comandos<br>[n] nueva partida<br>[r] girar ruleta<br>[/] buscar juegos</p>
       </nav>
 
       <main id="view" class="content" tabindex="-1" aria-live="polite"></main>
@@ -118,6 +118,18 @@
         </label>
         <label class="check align-end"><input type="checkbox" name="lower_is_better"> menor es mejor</label>
       </div>
+      <fieldset class="field">
+        <legend>¿qué días lo juegas? <span class="muted">(sin marcar = todos)</span></legend>
+        <div class="day-picker" id="day-picker">
+          <label><input type="checkbox" name="day" value="0"><span>lu</span></label>
+          <label><input type="checkbox" name="day" value="1"><span>ma</span></label>
+          <label><input type="checkbox" name="day" value="2"><span>mi</span></label>
+          <label><input type="checkbox" name="day" value="3"><span>ju</span></label>
+          <label><input type="checkbox" name="day" value="4"><span>vi</span></label>
+          <label><input type="checkbox" name="day" value="5"><span>sá</span></label>
+          <label><input type="checkbox" name="day" value="6"><span>do</span></label>
+        </div>
+      </fieldset>
       <label class="check" id="active-field"><input type="checkbox" name="active"> activo (aparece en el dashboard)</label>
       <footer class="modal-foot">
         <button type="button" class="btn ghost" data-close>cancelar</button>
@@ -176,6 +188,16 @@
         <button value="ok" class="btn danger solid">eliminar</button>
       </footer>
     </form>
+  </dialog>
+
+  <!-- Paleta de comandos (":" o Ctrl+K) -->
+  <dialog id="palette" class="modal palette" aria-label="Paleta de comandos">
+    <div class="palette-input"><span class="accent">:</span>
+      <input id="palette-q" autocomplete="off" spellcheck="false" placeholder="escribe un comando: jugar wordle, registrar, tema amber, ir stats…"
+        role="combobox" aria-expanded="true" aria-controls="palette-list">
+    </div>
+    <ul id="palette-list" class="palette-list" role="listbox"></ul>
+    <p class="muted small palette-help">↑↓ moverse · ⏎ ejecutar · esc cerrar</p>
   </dialog>
 
   <div id="toasts" class="toasts" aria-live="assertive"></div>

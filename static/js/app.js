@@ -35,7 +35,7 @@ const state = {
   route: "dashboard",
   history: { game_id: "", result: "", date_from: "", date_to: "", order: "desc" },
   calendar: null, // {year, month, selected}
-  roulette: { onlyPending: true, rotation: 0, spinning: false, autoSpin: false, log: [], result: null },
+  roulette: { pool: "pending", spinning: false, autoSpin: false, log: [], result: null },
   discover: { q: "", cat: "", hideAdded: true, limit: 48, suggestion: null, catalog: null, focus: false },
 };
 
@@ -287,7 +287,7 @@ function updateStatusBar() {
   const hhmm = now.toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" });
   const o = state.overview;
   $("#status-right").textContent = o
-    ? `racha ${o.current_streak}d | hoy ${o.played_today}/${o.total_games} | ${hhmm}`
+    ? `racha ${o.current_streak}d | hoy ${o.played_today}/${o.today_total} | ${hhmm}`
     : hhmm;
   $("#clock").textContent = `${state.today} ${hhmm}`;
 }
@@ -483,7 +483,9 @@ function mascotState(o) {
   const pending = o.pending_today.length;
   if (!o.total_games) return { mood: "sleep", text: "No tengo juegos que vigilar... agrega uno y despierto." };
   if (!pending) {
-    return { mood: "happy", text: `¡Todo jugado hoy! ${o.current_streak} día(s) de racha. Vuelve mañana.` };
+    return { mood: "happy", text: o.perfect_today
+      ? `¡Día perfecto! ✨ Llevas ${o.perfect_streak} día(s) perfecto(s) seguidos y ${o.current_streak} de racha.`
+      : `¡Todo lo de hoy está jugado! ${o.current_streak} día(s) de racha. Vuelve mañana.` };
   }
   if (o.current_streak > 0 && o.played_today === 0) {
     return { mood: "sad", text: `Tu racha de ${o.current_streak} día(s) está en peligro. ¡Juega algo hoy!` };
@@ -491,7 +493,7 @@ function mascotState(o) {
   if (o.played_today === 0) {
     return { mood: "idle", text: `Hoy te esperan ${pending} juego(s). ¿No sabes por cuál empezar? Gira la ruleta [r].` };
   }
-  return { mood: "idle", text: `Vas ${o.played_today}/${o.total_games}. Quedan ${pending}; si dudas, la ruleta elige por ti [r].` };
+  return { mood: "idle", text: `Vas ${o.played_today}/${o.today_total}. Quedan ${pending}; si dudas, la ruleta elige por ti [r].` };
 }
 
 function favButton(game) {
@@ -501,7 +503,9 @@ function favButton(game) {
 
 function gameCard(game, card) {
   const last = card?.last_session;
-  const status = card?.played_today ? resultTag(last.result) : '<span class="tag pending">[PEND]</span> pendiente';
+  const resting = !card?.played_today && card?.scheduled_today === false;
+  const status = card?.played_today ? resultTag(last.result)
+    : resting ? '<span class="tag pending">[ zz ]</span> descansa hoy' : '<span class="tag pending">[PEND]</span> pendiente';
   const rows = [["estado", status]];
   const compact = readPref("dle-density", "") === "compact";
   if (compact) {
@@ -523,7 +527,7 @@ function gameCard(game, card) {
       <button class="btn primary" data-log="${game.id}">${card?.played_today ? "editar" : "+ registrar"}</button>
     </div>`;
   const title = `${gicon(game)} <a href="#/game/${game.id}">${esc(slug(game.name))}</a>`;
-  return pane(title, body, { cls: `game-card ${card?.played_today ? "done" : ""}`, tag: "article", aside: favButton(game) });
+  return pane(title, body, { cls: `game-card ${card?.played_today ? "done" : ""} ${resting ? "resting" : ""}`, tag: "article", aside: favButton(game) });
 }
 
 function weekPane(week, { title = "semana", metricKey = "attempts", lowerBetter = true } = {}) {
@@ -549,20 +553,23 @@ function weekPane(week, { title = "semana", metricKey = "attempts", lowerBetter 
 }
 
 function achievementsPane(list) {
-  const items = list.map((a) => `
+  const unlocked = list.filter((a) => a.unlocked);
+  const next = list.filter((a) => !a.unlocked).slice(0, 3);
+  const items = [...unlocked, ...next].map((a) => `
     <li class="${a.unlocked ? "" : "locked"}">
       <span class="box">${a.unlocked ? "[x]" : "[ ]"}</span>
       <span>${a.icon} ${esc(a.title)}</span>
       ${a.unlocked ? "" : `<span>${asciiBar(a.progress, a.target, 12)} <span class="muted">${a.progress}/${a.target}</span></span>`}
     </li>`).join("");
-  return pane("logros", `<ul class="achievements">${items}</ul>`);
+  return pane("logros", `<ul class="achievements">${items}</ul>`, { aside: `<span class="muted">${unlocked.length}/${list.length}</span>` });
 }
 
 async function renderDashboard() {
   const o = await loadOverview();
   const cards = Object.fromEntries(o.games.map((c) => [c.game_id, c]));
   const active = sortGames(state.games.filter((g) => g.active), cards);
-  const nextPending = active.find((g) => !cards[g.id]?.played_today && g.url);
+  const pendingIds = new Set(o.pending_today);
+  const nextPending = active.find((g) => pendingIds.has(g.id) && g.url);
   const dateLabel = parseISO(o.today).toLocaleDateString("es", { weekday: "long", day: "numeric", month: "long" });
   const { mood, text } = mascotState(o);
   const swatches = ["--accent", "--win", "--streak", "--loss", "--info", "--text-2", "--line-2", "--muted"]
@@ -577,13 +584,14 @@ async function renderDashboard() {
         ${kv([
           ["fecha", esc(dateLabel)],
           ["juegos", o.total_games],
-          ["hoy", `${o.played_today}/${o.total_games} ${asciiBar(o.played_today, o.total_games || 1, 12)}`],
+          ["hoy", `${o.played_today}/${o.today_total} ${asciiBar(o.played_today, o.today_total || 1, 12)}${o.perfect_today ? ' <span class="c-streak">✨ perfecto</span>' : ""}`],
           ["partidas", o.total_sessions],
           ["victorias", `<span class="c-win">${o.wins}</span>`],
           ["derrotas", `<span class="c-loss">${o.losses}</span>`],
           ["% victorias", pct(o.win_rate)],
           ["racha", `<span class="c-streak">${o.current_streak} días</span>`],
           ["mejor racha", `${o.best_streak} días`],
+          ["días perfectos", `${o.perfect_days}${o.perfect_streak > 1 ? ` <span class="muted">(${o.perfect_streak} seguidos)</span>` : ""}`],
         ])}
         <div class="swatches" aria-hidden="true">${swatches}</div>
         <div class="speech"><span data-text="${esc(text)}"></span></div>
@@ -601,7 +609,13 @@ async function renderDashboard() {
         <button class="btn" data-share-day title="Copiar el resumen de hoy">⧉ compartir día</button>
         <button class="btn" data-new-game>+ juego</button>`,
     })}
-    ${pane("sistema", fetch)}
+    <div class="dash-top">
+      ${pane("sistema", fetch)}
+      <div class="stack">
+        ${weekPane(o.week, { title: "esta semana" })}
+        ${achievementsPane(o.achievements)}
+      </div>
+    </div>
     <section class="section">
       <div class="section-head">
         <div class="prompt"><span class="u">$</span> <span class="cmd">ls juegos/ --sort=${esc(readPref("dle-sort", "pending"))}</span></div>
@@ -615,10 +629,6 @@ async function renderDashboard() {
       ${active.length
         ? `<div class="game-grid">${active.map((g) => gameCard(g, cards[g.id])).join("")}</div>`
         : pane("", '<p class="empty">no hay juegos activos <a class="btn primary" href="#/discover">descubrir juegos</a></p>')}
-    </section>
-    <section class="section grid-2">
-      ${weekPane(o.week, { title: "esta semana" })}
-      ${achievementsPane(o.achievements)}
     </section>`;
 }
 
@@ -626,7 +636,8 @@ async function renderDashboard() {
 function sortGames(games, cards) {
   const mode = readPref("dle-sort", "pending");
   const byName = (a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" });
-  const pending = (g) => (cards[g.id]?.played_today ? 1 : 0);
+  // 0 = pendiente, 1 = jugado, 2 = descansa hoy
+  const pending = (g) => (cards[g.id]?.played_today ? 1 : cards[g.id]?.scheduled_today === false ? 2 : 0);
   const fav = (g) => (g.favorite ? 0 : 1);
   const cmp = {
     pending: (a, b) => pending(a) - pending(b) || fav(a) - fav(b) || byName(a, b),
@@ -652,13 +663,13 @@ function daySummaryText() {
   const date = parseISO(o.today).toLocaleDateString("es", { weekday: "long", day: "numeric", month: "long" });
   const lines = active.map((g) => {
     const c = cards[g.id];
-    if (!c?.played_today) return `⏳ ${g.name}`;
+    if (!c?.played_today) return c?.scheduled_today === false ? null : `⏳ ${g.name}`;
     const s = c.last_session;
     const detail = sessionSummary(g, s);
     return `${s.result === "win" ? "✅" : "❌"} ${g.name}${detail ? ` — ${detail}` : ""}`;
   });
-  return [`dle_tracker · ${date}`, ...lines, "",
-    `${o.played_today}/${o.total_games} jugados · 🔥 ${o.current_streak} día(s) de racha`].join("\n");
+  return [`dle_tracker · ${date}`, ...lines.filter(Boolean), "",
+    `${o.played_today}/${o.today_total} jugados${o.perfect_today ? " · ✨ día perfecto" : ""} · 🔥 ${o.current_streak} día(s) de racha`].join("\n");
 }
 
 async function copyText(text) {
@@ -954,91 +965,174 @@ afterRender.game = () => {
 
 /* ================================================================ ruleta */
 
-function rouletteCandidates() {
+const POOLS = { pending: "pendientes de hoy", all: "todos los activos", favorites: "favoritos" };
+const REEL = { length: 64, winnerAt: 56 };
+
+function roulettePool(pool = state.roulette.pool) {
   const active = state.games.filter((g) => g.active);
-  if (!state.roulette.onlyPending) return active;
-  const pending = new Set(state.overview?.pending_today || []);
-  return active.filter((g) => pending.has(g.id));
+  if (pool === "favorites") return active.filter((g) => g.favorite);
+  if (pool === "pending") {
+    const pending = new Set(state.overview?.pending_today || []);
+    return active.filter((g) => pending.has(g.id));
+  }
+  return active;
 }
 
-function wheelSvg(games) {
-  const R = 190;
-  const n = games.length;
-  const per = 360 / n;
-  const point = (deg, r) => {
-    const a = (deg * Math.PI) / 180;
-    return [r * Math.sin(a), -r * Math.cos(a)];
-  };
-  const segs = games.map((g, i) => {
-    const cls = `seg ${i % 2 ? "b" : "a"}`;
-    let shape;
-    if (n === 1) {
-      shape = `<circle class="${cls}" r="${R}" data-seg="${i}"/>`;
-    } else {
-      const [x1, y1] = point(i * per - per / 2, R);
-      const [x2, y2] = point(i * per + per / 2, R);
-      shape = `<path class="${cls}" data-seg="${i}" d="M0 0 L${x1.toFixed(2)} ${y1.toFixed(2)} A${R} ${R} 0 ${per > 180 ? 1 : 0} 1 ${x2.toFixed(2)} ${y2.toFixed(2)} Z"/>`;
-    }
-    const name = g.name.length > 12 ? `${g.name.slice(0, 11)}…` : g.name;
-    // El icono va hacia el borde de la rueda y el nombre más al centro.
-    const rot = `rotate(${i * per - 90})`;
-    const icon = g.icon_url
-      ? `<image href="${esc(g.icon_url)}" data-fallbacks="${esc(iconFallbacks(g).join(" "))}" x="-12" y="-12" width="24" height="24" transform="${rot} translate(${R * 0.83} 0) rotate(90)" preserveAspectRatio="xMidYMid meet"/>`
-      : `<text transform="${rot} translate(${R * 0.83} 0) rotate(90)" text-anchor="middle">${esc(g.icon)}</text>`;
-    const label = `${icon}<text data-seg-label="${i}" transform="${rot} translate(${R * 0.52} 0)" text-anchor="middle">${esc(name)}</text>`;
-    return shape + label;
+/** Secuencia de la tira: aleatoria, sin repetir vecinos, con el ganador en `winnerAt`. */
+function reelSequence(games, winner) {
+  const seq = [];
+  for (let i = 0; i < REEL.length; i++) {
+    if (i === REEL.winnerAt) { seq.push(winner); continue; }
+    let pick;
+    do {
+      pick = games[Math.floor(Math.random() * games.length)];
+    } while (games.length > 1 && (pick === seq[i - 1] || (i + 1 === REEL.winnerAt && pick === winner)));
+    seq.push(pick);
+  }
+  return seq;
+}
+
+function reelTile(g, i) {
+  return `<div class="reel-tile" data-i="${i}">${gicon(g, "reel-icon")}<span class="reel-name">${esc(g.name)}</span></div>`;
+}
+
+/* --- sonido opcional (WebAudio, sin archivos) --- */
+let audioCtx = null;
+function beep(freq = 1400, ms = 18, gain = 0.04) {
+  if (readPref("dle-sound", "off") !== "on") return;
+  try {
+    audioCtx ||= new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const vol = audioCtx.createGain();
+    osc.type = "square";
+    osc.frequency.value = freq;
+    vol.gain.value = gain;
+    osc.connect(vol).connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + ms / 1000);
+  } catch { /* sin audio */ }
+}
+
+function fanfare() {
+  [880, 1175, 1568].forEach((f, i) => setTimeout(() => beep(f, 90, 0.05), i * 110));
+}
+
+/** Confeti ASCII que sale del ganador. */
+function confetti(target) {
+  if (REDUCED_MOTION.matches || !target) return;
+  const layer = $("#reel-fx");
+  if (!layer) return;
+  const box = target.getBoundingClientRect();
+  const origin = layer.getBoundingClientRect();
+  const chars = ["*", "+", "✦", "·", "★", "#", "$", "@"];
+  for (let i = 0; i < 28; i++) {
+    const s = document.createElement("span");
+    s.className = "spark";
+    s.textContent = chars[i % chars.length];
+    s.style.left = `${box.left - origin.left + box.width / 2}px`;
+    s.style.top = `${box.top - origin.top + box.height / 2}px`;
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 60 + Math.random() * 120;
+    s.style.setProperty("--dx", `${Math.cos(angle) * dist}px`);
+    s.style.setProperty("--dy", `${Math.sin(angle) * dist * 0.6}px`);
+    s.style.color = ["var(--accent)", "var(--streak)", "var(--info)", "var(--win)"][i % 4];
+    layer.append(s);
+    setTimeout(() => s.remove(), 1100);
+  }
+}
+
+function loadQueue() {
+  try {
+    const q = JSON.parse(localStorage.getItem("dle-queue"));
+    if (q && q.date === state.today && Array.isArray(q.ids)) return q.ids;
+  } catch { /* nada */ }
+  return null;
+}
+
+function saveQueue(ids) {
+  writePref("dle-queue", ids ? JSON.stringify({ date: state.today, ids }) : null);
+}
+
+function queuePane() {
+  const ids = (loadQueue() || []).filter((id) => gameById(id));
+  if (!ids.length) {
+    return pane("cola del día", `<p class="dim small">Baraja tus juegos y juégalos en ese orden: perfecto para no pensar.</p>
+      <button class="btn primary" data-shuffle-queue>⇄ barajar cola</button>`);
+  }
+  const cards = Object.fromEntries((state.overview?.games || []).map((c) => [c.game_id, c]));
+  const items = ids.map((id, i) => {
+    const g = gameById(id);
+    const done = cards[id]?.played_today;
+    return `<li class="${done ? "done" : ""}">
+      <span class="q-num">${String(i + 1).padStart(2, "0")}</span>
+      ${gicon(g)} <span class="grow">${esc(g.name)}</span>
+      ${done ? resultTag(cards[id].last_session.result, { label: false })
+        : `${g.url ? `<a class="btn" href="${esc(g.url)}" target="_blank" rel="noopener noreferrer" title="Jugar">▶</a>` : ""}
+           <button class="btn primary" data-log="${g.id}" title="Registrar">+</button>`}
+    </li>`;
   }).join("");
-  return `<svg class="wheel" id="wheel" viewBox="-200 -200 400 400" role="img" aria-label="Ruleta con ${n} juegos"
-    style="transform: rotate(${state.roulette.rotation}deg)">
-    <circle r="198" fill="none" stroke="var(--accent)" stroke-width="2"/>
-    ${segs}
-  </svg>`;
+  const left = ids.filter((id) => !cards[id]?.played_today).length;
+  return pane("cola del día", `<ol class="queue">${items}</ol>
+    <div class="card-actions" style="margin-top:10px">
+      <button class="btn" data-shuffle-queue>⇄ volver a barajar</button>
+      <button class="btn danger" data-clear-queue>borrar</button>
+    </div>`, { aside: `<span class="muted">${left ? `quedan ${left}` : "¡completa! ✓"}</span>` });
 }
 
 async function renderRoulette() {
   const o = await loadOverview();
   const r = state.roulette;
   // Si ya está todo jugado, no tiene sentido filtrar por pendientes.
-  if (r.onlyPending && !o.pending_today.length) r.onlyPending = false;
-  const games = rouletteCandidates();
-  state.wheelGames = games;
+  if (r.pool === "pending" && !o.pending_today.length) r.pool = "all";
+  const games = roulettePool();
+  state.reelGames = games;
   const res = r.result && games.find((g) => g.id === r.result) ? gameById(r.result) : null;
+  const sound = readPref("dle-sound", "off") === "on";
+  const counts = { pending: roulettePool("pending").length, all: roulettePool("all").length, favorites: roulettePool("favorites").length };
 
-  const wheel = games.length
-    ? `<div class="wheel-wrap">
-         <span class="wheel-pointer" aria-hidden="true">▼</span>
-         ${wheelSvg(games)}
-         <div class="wheel-hub"><span data-mascot="${r.spinning ? "spin" : res ? "happy" : "idle"}" data-scale="5" id="wheel-mascot"></span></div>
+  // Tira inicial (antes de girar): los juegos del grupo, repetidos.
+  const initial = games.length ? Array.from({ length: 24 }, (_, i) => games[i % games.length]) : [];
+  const reel = games.length
+    ? `<div class="reel-window" id="reel-window">
+         <span class="reel-marker top" aria-hidden="true">▼</span>
+         <div class="reel-strip" id="reel-strip">${initial.map(reelTile).join("")}</div>
+         <span class="reel-marker bottom" aria-hidden="true">▲</span>
+         <div class="reel-fx" id="reel-fx" aria-hidden="true"></div>
        </div>`
-    : '<p class="empty">no hay juegos para girar</p>';
+    : `<p class="empty">no hay juegos en «${POOLS[r.pool]}»</p>`;
 
   const resultHtml = res
-    ? `<div class="result-name">${gicon(res, "xl")} ${esc(res.name)}</div>
-       <p class="dim small">${esc(res.description || "")}</p>
+    ? `<div class="result-row">
+         <span data-mascot="happy" data-scale="5"></span>
+         <div class="grow">
+           <div class="result-name">${gicon(res, "xl")} ${esc(res.name)}</div>
+           <p class="dim small">${esc(res.description || "")}</p>
+         </div>
+       </div>
        <div class="card-actions">
          ${res.url ? `<a class="btn primary" href="${esc(res.url)}" target="_blank" rel="noopener noreferrer">▶ jugar ahora</a>` : ""}
          <button class="btn" data-log="${res.id}">+ registrar</button>
        </div>`
-    : `<p class="dim">Pulsa <b>girar</b> (o la tecla <kbd>r</kbd>) y Bit elegirá un juego al azar.</p>`;
+    : `<div class="result-row"><span data-mascot="${r.spinning ? "spin" : "idle"}" data-scale="5" id="reel-mascot"></span>
+       <p class="dim grow">Pulsa <b>girar</b> (o la tecla <kbd>r</kbd>) y Bit elegirá un juego al azar.</p></div>`;
 
   return `
     ${pageHead({
-      cmd: `shuf -n 1 ${r.onlyPending ? "pendientes_hoy" : "juegos_activos"}.txt`,
+      cmd: `shuf -n 1 ${r.pool}.txt`,
       title: "ruleta",
       sub: "¿No sabes qué jugar? Deja que el azar decida.",
+      actions: `<button class="btn" data-toggle-sound aria-pressed="${sound}">${sound ? "🔊 sonido" : "🔇 sin sonido"}</button>
+        <button class="btn primary big" id="spin-btn" ${games.length && !r.spinning ? "" : "disabled"}>🎲 girar</button>`,
     })}
-    <div class="roulette">
-      ${pane(`${games.length} juego(s)`, wheel)}
-      <div class="stack">
-        ${pane("opciones", `
-          <div class="segmented" role="radiogroup" aria-label="Juegos en la ruleta">
-            <label><input type="radio" name="pool" value="pending" ${r.onlyPending ? "checked" : ""} ${o.pending_today.length ? "" : "disabled"}><span>pendientes (${o.pending_today.length})</span></label>
-            <label><input type="radio" name="pool" value="all" ${r.onlyPending ? "" : "checked"}><span>todos (${state.games.filter((g) => g.active).length})</span></label>
-          </div>
-          <div style="margin-top:14px"><button class="btn primary big" id="spin-btn" ${games.length && !r.spinning ? "" : "disabled"}>🎲 girar</button></div>`)}
-        ${pane("resultado", `<div id="roulette-result">${resultHtml}</div>`)}
-        ${pane("stdout", `<pre class="console-log" id="roulette-log">${r.log.length ? r.log.join("\n") : '<span class="muted">esperando…</span>'}</pre>`)}
-      </div>
+    ${pane(`${games.length} juego(s) · ${POOLS[r.pool]}`, reel, { cls: "reel-pane" })}
+    <div class="roulette-grid section">
+      ${pane("opciones", `
+        <div class="segmented pool-picker" role="radiogroup" aria-label="Juegos en la ruleta">
+          ${Object.entries(POOLS).map(([k, label]) => `<label><input type="radio" name="pool" value="${k}" ${r.pool === k ? "checked" : ""} ${counts[k] ? "" : "disabled"}><span>${label} (${counts[k]})</span></label>`).join("")}
+        </div>`)}
+      ${pane("resultado", `<div id="roulette-result">${resultHtml}</div>`)}
+      ${queuePane()}
+      ${pane("stdout", `<pre class="console-log" id="roulette-log">${r.log.length ? r.log.join("\n") : '<span class="muted">esperando…</span>'}</pre>`)}
     </div>`;
 }
 
@@ -1055,49 +1149,93 @@ function rouletteLog(line) {
 
 function spinRoulette() {
   const r = state.roulette;
-  const games = state.wheelGames || [];
-  const wheel = $("#wheel");
-  if (r.spinning || !games.length || !wheel) return;
+  const games = state.reelGames || [];
+  const strip = $("#reel-strip");
+  const win = $("#reel-window");
+  if (r.spinning || !games.length || !strip) return;
   r.spinning = true;
   r.result = null;
   $("#spin-btn").disabled = true;
-  $$("#wheel .win").forEach((el) => el.classList.remove("win"));
-  Mascot.setMood($("#wheel-mascot"), "spin");
-  $("#roulette-result").innerHTML = '<p class="dim">girando<span class="cursor"></span></p>';
-  rouletteLog(`<b>$</b> shuf -n 1 ${r.onlyPending ? "pendientes_hoy" : "juegos_activos"}.txt`);
+  Mascot.setMood($("#reel-mascot"), "spin");
+  $("#roulette-result").innerHTML = '<div class="result-row"><span data-mascot="spin" data-scale="5"></span><p class="dim grow">girando<span class="cursor"></span></p></div>';
+  Mascot.mountAll($("#roulette-result"));
+  rouletteLog(`<b>$</b> shuf -n 1 ${r.pool}.txt`);
 
-  const n = games.length;
-  const per = 360 / n;
-  const index = Math.floor(Math.random() * n);
-  // Rotación necesaria para que el centro del segmento quede bajo el puntero (arriba).
-  const target = ((-index * per) % 360 + 360) % 360;
-  const current = ((r.rotation % 360) + 360) % 360;
-  const jitter = (Math.random() - 0.5) * per * 0.6;
-  r.rotation += 360 * 6 + ((target - current + 360) % 360) + jitter;
+  const winner = games[Math.floor(Math.random() * games.length)];
+  strip.style.transition = "none";
+  strip.style.transform = "translateX(0)";
+  strip.innerHTML = reelSequence(games, winner).map(reelTile).join("");
+  const tile = strip.querySelector(".reel-tile");
+  const step = tile.getBoundingClientRect().width + parseFloat(getComputedStyle(strip).columnGap || 0);
+  const jitter = (Math.random() - 0.5) * step * 0.6;
+  const target = REEL.winnerAt * step + step / 2 - win.clientWidth / 2 + jitter;
+  void strip.offsetWidth; // aplica la posición inicial antes de animar
+
+  const duration = REDUCED_MOTION.matches ? 0 : 5200;
+  strip.style.transition = duration ? `transform ${duration}ms cubic-bezier(0.08, 0.62, 0.1, 1)` : "none";
+  strip.style.transform = `translateX(${-target}px)`;
+
+  // "Tic" cada vez que una tarjeta pasa bajo el marcador.
+  let last = -1;
+  const tiles = strip.children;
+  const tick = () => {
+    if (!r.spinning) return;
+    const x = -new DOMMatrixReadOnly(getComputedStyle(strip).transform).m41;
+    const idx = Math.floor((x + win.clientWidth / 2) / step);
+    if (idx !== last && tiles[idx]) {
+      tiles[last]?.classList.remove("under");
+      tiles[idx].classList.add("under");
+      last = idx;
+      beep();
+    }
+    requestAnimationFrame(tick);
+  };
+  if (duration) requestAnimationFrame(tick);
+
   const finish = () => {
     if (!r.spinning) return;
     r.spinning = false;
-    const game = games[index];
-    r.result = game.id;
-    rouletteLog(`→ ${esc(game.icon)} ${esc(game.name)}`);
-    if (state.route === "roulette") refresh();
+    r.result = winner.id;
+    rouletteLog(`→ ${esc(winner.name)}`);
+    const tileEl = tiles[REEL.winnerAt];
+    [...tiles].forEach((t) => t.classList.remove("under"));
+    tileEl.classList.add("winner");
+    confetti(tileEl);
+    fanfare();
+    setTimeout(() => {
+      if (state.route !== "roulette") return;
+      // Solo se actualizan los paneles; la tira se queda en el ganador.
+      $("#spin-btn").disabled = false;
+      $("#roulette-result").innerHTML = `
+        <div class="result-row"><span data-mascot="happy" data-scale="5"></span>
+          <div class="grow"><div class="result-name">${gicon(winner, "xl")} ${esc(winner.name)}</div>
+          <p class="dim small">${esc(winner.description || "")}</p></div></div>
+        <div class="card-actions">
+          ${winner.url ? `<a class="btn primary" href="${esc(winner.url)}" target="_blank" rel="noopener noreferrer">▶ jugar ahora</a>` : ""}
+          <button class="btn" data-log="${winner.id}">+ registrar</button>
+        </div>`;
+      Mascot.mountAll($("#roulette-result"));
+    }, duration ? 350 : 0);
   };
-  wheel.addEventListener("transitionend", finish, { once: true });
-  wheel.style.transform = `rotate(${r.rotation}deg)`;
-  // Sin animación (movimiento reducido) transitionend no se dispara.
-  setTimeout(finish, REDUCED_MOTION.matches ? 50 : 4600);
+  if (duration) {
+    // Solo cuenta el fin de la animación de la tira (las tarjetas también emiten transitionend).
+    const onEnd = (e) => {
+      if (e.target !== strip || e.propertyName !== "transform") return;
+      strip.removeEventListener("transitionend", onEnd);
+      finish();
+    };
+    strip.addEventListener("transitionend", onEnd);
+    setTimeout(finish, duration + 400);
+  } else {
+    finish();
+  }
 }
 
 afterRender.roulette = () => {
   const r = state.roulette;
-  if (r.result) {
-    const i = (state.wheelGames || []).findIndex((g) => g.id === r.result);
-    $(`#wheel [data-seg="${i}"]`)?.classList.add("win");
-    $(`#wheel [data-seg-label="${i}"]`)?.classList.add("win");
-  }
   $("#spin-btn")?.addEventListener("click", spinRoulette);
   $$('input[name="pool"]').forEach((input) => input.addEventListener("change", () => {
-    r.onlyPending = input.value === "pending";
+    r.pool = input.value;
     r.result = null;
     refresh();
   }));
@@ -1231,7 +1369,7 @@ async function renderStats() {
       ${pane("victorias / derrotas", `<div class="chart-box short"><canvas id="winloss-chart"></canvas></div>${winBar}`)}
     </div>
     <section class="section">
-      ${pane("actividad · último año", heatmapHtml(yearSessions), { aside: `<span class="muted">${new Set(yearSessions.map((s) => s.played_at)).size} día(s) jugados</span>` })}
+      ${pane("actividad · último año", heatmapHtml(yearSessions))}
     </section>
     <section class="section">
       ${pane("evolución por juego", `
@@ -1251,7 +1389,7 @@ async function renderStats() {
     </section>`;
 }
 
-/** Mapa de actividad estilo GitHub: una columna por semana, lunes arriba. */
+/** Mapa de actividad estilo GitHub: 53 semanas que ocupan todo el ancho. */
 function heatmapHtml(sessions) {
   const counts = {};
   for (const s of sessions) counts[s.played_at] = (counts[s.played_at] || 0) + 1;
@@ -1268,17 +1406,31 @@ function heatmapHtml(sessions) {
     const n = counts[day] || 0;
     const level = n === 0 ? 0 : Math.min(4, Math.ceil((n / max) * 4));
     const d = parseISO(day);
-    if (i % 7 === 0 && d.getMonth() !== lastMonth && d.getDate() <= 7) {
-      months.push(`<span style="grid-column:${i / 7 + 1}">${MONTHS[d.getMonth()].slice(0, 3)}</span>`);
+    const col = Math.floor(i / 7) + 2; // la columna 1 son los nombres de los días
+    if (i % 7 === 0 && d.getMonth() !== lastMonth) {
+      if (lastMonth !== -1 || d.getDate() <= 7) months.push(`<span style="grid-column:${col} / span 4">${MONTHS[d.getMonth()].slice(0, 3)}</span>`);
       lastMonth = d.getMonth();
     }
-    cells.push(`<i class="l${level}" title="${fmtDate(day, { relative: false })}: ${n ? `${n} partida(s)` : "sin partidas"}"></i>`);
+    cells.push(`<i class="l${level}${day === today ? " today" : ""}" style="grid-column:${col};grid-row:${(i % 7) + 2}"
+      title="${fmtDate(day, { relative: false })}: ${n ? `${n} partida(s)` : "sin partidas"}"></i>`);
   }
+  const labels = ["lu", "", "mi", "", "vi", "", "do"].map((l, r) => `<b style="grid-row:${r + 2}">${l}</b>`).join("");
+  const a = DleLogic.activitySummary(sessions, start, today);
+  const WEEKDAYS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"];
+  const topMonth = a.top_month ? `${MONTHS[Number(a.top_month.month.slice(5)) - 1]} ${a.top_month.month.slice(0, 4)}` : "—";
   return `<div class="heatmap-wrap">
-      <div class="heatmap-months">${months.join("")}</div>
-      <div class="heatmap" role="img" aria-label="Partidas por día durante el último año">${cells.join("")}</div>
+      <div class="heatmap" role="img" aria-label="Partidas por día durante el último año">${months.join("")}${labels}${cells.join("")}</div>
     </div>
-    <p class="muted small heat-legend">menos <i class="l0"></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i> más</p>`;
+    <div class="heat-footer">
+      <dl class="heat-stats">
+        <div><dt>días jugados</dt><dd>${a.days_played}</dd></div>
+        <div><dt>partidas</dt><dd>${a.sessions}</dd></div>
+        <div><dt>racha más larga</dt><dd>${a.best_streak} d</dd></div>
+        <div><dt>día favorito</dt><dd>${a.top_weekday === null ? "—" : WEEKDAYS[a.top_weekday]}</dd></div>
+        <div><dt>mes más activo</dt><dd>${topMonth}</dd></div>
+      </dl>
+      <p class="muted small heat-legend">menos <i class="l0"></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i> más</p>
+    </div>`;
 }
 
 afterRender.stats = () => {
@@ -1492,6 +1644,7 @@ async function renderSettings() {
           <p class="dim small">Borra todos los juegos y partidas de este navegador y vuelve a los juegos de ejemplo.</p>
           <button class="btn danger" id="reset-btn">rm -rf ~/.dle</button>`)}
         ${pane("atajos", kv([
+          [": o ctrl+k", "paleta de comandos"],
           ["1-8", "navegar entre secciones"],
           ["/", "buscar juegos nuevos"],
           ["r", "girar la ruleta"],
@@ -1603,6 +1756,7 @@ function openGameForm(game = null) {
     gameForm.elements[key].checked = !!g[key];
   }
   $("#active-field").hidden = !game;
+  $$('#day-picker input').forEach((c) => { c.checked = Array.isArray(g.days) && g.days.includes(Number(c.value)); });
   renderIconStatus(game);
   updatePrimaryOptions(g.primary_metric);
   $("#game-dialog").showModal();
@@ -1674,6 +1828,7 @@ gameForm.addEventListener("submit", async (e) => {
     track_time: el.track_time.checked,
     primary_metric: el.primary_metric.value,
     lower_is_better: el.lower_is_better.checked,
+    days: $$('#day-picker input:checked').map((c) => Number(c.value)),
   };
   const id = gameForm.dataset.id;
   if (id) payload.active = el.active.checked;
@@ -1888,6 +2043,24 @@ document.addEventListener("click", async (e) => {
     else if (d.editSession) await openSessionForm({ session: await api(`/api/sessions/${d.editSession}`) });
     else if (d.deleteSession) await deleteSession(d.deleteSession);
     else if ("spinLink" in d) state.roulette.autoSpin = true;
+    else if ("toggleSound" in d) {
+      writePref("dle-sound", readPref("dle-sound", "off") === "on" ? null : "on");
+      beep(1200, 40);
+      refresh();
+    } else if ("shuffleQueue" in d) {
+      const ids = roulettePool(state.roulette.pool === "favorites" ? "favorites" : "pending").map((g) => g.id);
+      const pool = ids.length ? ids : roulettePool("all").map((g) => g.id);
+      for (let i = pool.length - 1; i > 0; i--) {
+        const k = Math.floor(Math.random() * (i + 1));
+        [pool[i], pool[k]] = [pool[k], pool[i]];
+      }
+      saveQueue(pool);
+      rouletteLog(`<b>$</b> shuf pendientes.txt > cola_${state.today}.txt  (${pool.length})`);
+      refresh();
+    } else if ("clearQueue" in d) {
+      saveQueue(null);
+      refresh();
+    }
     else if (d.fav) {
       const g = gameById(d.fav);
       await api(`/api/games/${g.id}`, { method: "PUT", body: { favorite: !g.favorite } });
@@ -1962,8 +2135,105 @@ document.addEventListener("click", async (e) => {
   }
 });
 
-/* Atajos de teclado: 1-7 navegan, r gira la ruleta, n registra partida. */
+/* ================================================================ paleta de comandos */
+
+const norm = (t) => String(t).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+/** Todas las acciones disponibles ahora mismo. */
+function paletteCommands(query) {
+  const cmds = [];
+  const add = (label, hint, run) => cmds.push({ label, hint, run });
+  const names = { dashboard: "dashboard", games: "juegos", discover: "descubrir", roulette: "ruleta",
+    history: "historial", stats: "estadísticas", calendar: "calendario", settings: "configuración" };
+  NAV_ORDER.forEach((r, i) => add(`ir a ${names[r]}`, String(i + 1), () => { location.hash = `#/${r}`; }));
+  const pending = new Set(state.overview?.pending_today || []);
+  for (const g of [...state.games].filter((x) => x.active).sort((a, b) => pending.has(b.id) - pending.has(a.id))) {
+    if (g.url) add(`jugar ${g.name}`, pending.has(g.id) ? "pendiente" : "", () => window.open(g.url, "_blank", "noopener"));
+    add(`registrar ${g.name}`, "", () => openSessionForm({ gameId: g.id }));
+    add(`ver ${g.name}`, "", () => { location.hash = `#/game/${g.id}`; });
+  }
+  add("girar la ruleta", "r", () => { state.roulette.autoSpin = true; if (state.route === "roulette") spinRoulette(); else location.hash = "#/roulette"; });
+  add("registrar partida", "n", () => openSessionForm());
+  add("nuevo juego", "", () => openGameForm());
+  add("compartir el día (copiar resumen)", "", async () => toast(await copyText(daySummaryText()) ? "resumen copiado" : "no se pudo copiar"));
+  add("sorpréndeme con un juego nuevo", "", () => { state.discover.suggestion = null; location.hash = "#/discover"; });
+  for (const t of ["sistema", "phosphor", "amber", "paper"]) add(`tema ${t}`, "", () => applyTheme(t === "sistema" ? "system" : t));
+  add("exportar datos (json)", "", async () => { location.hash = "#/settings"; setTimeout(() => $("#export-btn")?.click(), 300); });
+  if (query.trim()) {
+    add(`buscar «${query.trim()}» en el catálogo`, "/", () => {
+      state.discover.q = query.trim();
+      state.discover.focus = true;
+      if (state.route === "discover") refresh(); else location.hash = "#/discover";
+    });
+  }
+  return cmds;
+}
+
+function filterCommands(query) {
+  const words = norm(query).split(/\s+/).filter(Boolean);
+  const all = paletteCommands(query);
+  if (!words.length) return all.slice(0, 12);
+  return all
+    .map((c) => ({ c, label: norm(c.label) }))
+    .filter(({ c, label }) => words.every((w) => label.includes(w)) || c.label.startsWith("buscar «"))
+    .sort((a, b) => (b.label.startsWith(words[0]) - a.label.startsWith(words[0])))
+    .map(({ c }) => c)
+    .slice(0, 12);
+}
+
+const palette = { items: [], index: 0 };
+
+function renderPalette() {
+  const list = $("#palette-list");
+  palette.items = filterCommands($("#palette-q").value);
+  palette.index = Math.min(palette.index, Math.max(palette.items.length - 1, 0));
+  list.innerHTML = palette.items.map((c, i) => `<li role="option" data-i="${i}" aria-selected="${i === palette.index}"
+    class="${i === palette.index ? "sel" : ""}"><span>${esc(c.label)}</span>${c.hint ? `<kbd>${esc(c.hint)}</kbd>` : ""}</li>`).join("")
+    || '<li class="muted">sin coincidencias</li>';
+}
+
+function openPalette() {
+  const dialog = $("#palette");
+  if (dialog.open) return;
+  $("#palette-q").value = "";
+  palette.index = 0;
+  renderPalette();
+  dialog.showModal();
+  $("#palette-q").focus();
+}
+
+function runPalette(i = palette.index) {
+  const cmd = palette.items[i];
+  if (!cmd) return;
+  $("#palette").close();
+  Promise.resolve(cmd.run()).catch((err) => toast(err.message, "error"));
+}
+
+$("#palette-q").addEventListener("input", () => { palette.index = 0; renderPalette(); });
+$("#palette-q").addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    const n = palette.items.length || 1;
+    palette.index = (palette.index + (e.key === "ArrowDown" ? 1 : -1) + n) % n;
+    renderPalette();
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    runPalette();
+  }
+});
+$("#palette-list").addEventListener("click", (e) => {
+  const li = e.target.closest("li[data-i]");
+  if (li) runPalette(Number(li.dataset.i));
+});
+$("#palette").addEventListener("click", (e) => { if (e.target.id === "palette") e.target.close(); });
+
+/* Atajos de teclado: 1-8 navegan, : o Ctrl+K abre comandos, / busca, r gira la ruleta, n registra. */
 document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    if (!document.querySelector("dialog[open]:not(#palette)")) openPalette();
+    return;
+  }
   if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
   if (document.querySelector("dialog[open]")) return;
   // Solo se bloquean mientras se escribe (no en casillas ni botones de opción).
@@ -1976,6 +2246,8 @@ document.addEventListener("keydown", (e) => {
   } else if (e.key === "r") {
     if (state.route === "roulette") spinRoulette();
     else { state.roulette.autoSpin = true; location.hash = "#/roulette"; }
+  } else if (e.key === ":") {
+    openPalette();
   } else if (e.key === "/") {
     state.discover.focus = true;
     if (state.route === "discover") $("#discover-q")?.focus();

@@ -236,18 +236,48 @@
   const ACHIEVEMENTS = [
     // [clave, icono, título, fuente, objetivo]
     ["first_game", "🏆", "Primera partida", "played", 1],
+    ["perfect_1", "✨", "Día perfecto (todo jugado)", "perfect_days", 1],
     ["streak_7", "🔥", "7 días seguidos", "best_streak", 7],
+    ["collector_10", "🗂️", "10 juegos en tu lista", "games", 10],
+    ["explorer_5", "🧭", "Juegos de 5 categorías", "categories", 5],
+    ["perfect_10", "💎", "10 días perfectos", "perfect_days", 10],
     ["streak_30", "🔥", "30 días seguidos", "best_streak", 30],
     ["games_100", "🎯", "100 partidas", "played", 100],
     ["wins_100", "💯", "100 victorias", "wins", 100],
+    ["streak_100", "🌋", "100 días seguidos", "best_streak", 100],
+    ["games_1000", "🏅", "1000 partidas", "played", 1000],
   ];
 
   function achievements(values) {
     return ACHIEVEMENTS.map(([key, icon, title, source, target]) => ({
       key, icon, title, target,
-      progress: Math.min(values[source], target),
-      unlocked: values[source] >= target,
+      progress: Math.min(values[source] || 0, target),
+      unlocked: (values[source] || 0) >= target,
     }));
+  }
+
+  /** ¿Toca jugar este juego ese día? `days` = días de la semana (0 = lunes); vacío = todos. */
+  function isScheduled(game, day) {
+    return !Array.isArray(game.days) || !game.days.length || game.days.includes(weekday(day));
+  }
+
+  /**
+   * Días perfectos: se jugaron todos los juegos activos que tocaban ese día
+   * (y que ya existían). Devuelve la lista de fechas.
+   */
+  function perfectDays(games, sessions) {
+    const active = games.filter((g) => g.active);
+    const playedBy = new Map();
+    for (const s of sessions) {
+      if (!playedBy.has(s.played_at)) playedBy.set(s.played_at, new Set());
+      playedBy.get(s.played_at).add(s.game_id);
+    }
+    const result = [];
+    for (const [day, ids] of playedBy) {
+      const due = active.filter((g) => isScheduled(g, day) && (!g.created_at || g.created_at.slice(0, 10) <= day));
+      if (due.length && due.every((g) => ids.has(g.id))) result.push(day);
+    }
+    return result.sort();
   }
 
   function overview(games, sessions, today) {
@@ -257,20 +287,60 @@
     for (const s of sessions) byGame.get(s.game_id)?.push(s);
     const active = games.filter((g) => g.active);
     const playedTodayIds = new Set(sessions.filter((s) => s.played_at === today).map((s) => s.game_id));
+    const due = active.filter((g) => isScheduled(g, today));
+    const playedToday = active.filter((g) => playedTodayIds.has(g.id));
+    const perfect = perfectDays(games, sessions);
+    const perfectStreaks = streaks(perfect, today);
     return {
       today,
       total_games: active.length,
-      played_today: active.filter((g) => playedTodayIds.has(g.id)).length,
-      pending_today: active.filter((g) => !playedTodayIds.has(g.id)).map((g) => g.id),
+      // Hoy: los que tocan hoy más los que jugaste aunque no tocaran.
+      today_total: new Set([...due, ...playedToday]).size,
+      played_today: playedToday.length,
+      pending_today: due.filter((g) => !playedTodayIds.has(g.id)).map((g) => g.id),
+      resting_today: active.filter((g) => !isScheduled(g, today) && !playedTodayIds.has(g.id)).map((g) => g.id),
       total_sessions: counts.played,
       wins: counts.wins,
       losses: counts.losses,
       win_rate: counts.win_rate,
       current_streak: overall.current,
       best_streak: overall.best,
+      perfect_days: perfect.length,
+      perfect_today: perfect.includes(today),
+      perfect_streak: perfectStreaks.current,
       week: weeklyComparison(sessions, today),
-      achievements: achievements({ ...counts, best_streak: overall.best }),
-      games: games.map((g) => gameSummary(g, byGame.get(g.id), today)),
+      achievements: achievements({
+        ...counts,
+        best_streak: overall.best,
+        perfect_days: perfect.length,
+        games: games.length,
+        categories: new Set(games.map((g) => (g.category || "").trim().toLowerCase()).filter(Boolean)).size,
+      }),
+      games: games.map((g) => ({ ...gameSummary(g, byGame.get(g.id), today), scheduled_today: isScheduled(g, today) })),
+    };
+  }
+
+  /** Resumen de actividad entre dos fechas (para el mapa anual). */
+  function activitySummary(sessions, from, to) {
+    const inRange = sessions.filter((s) => s.played_at >= from && s.played_at <= to);
+    const days = [...new Set(inRange.map((s) => s.played_at))];
+    const perWeekday = Array(7).fill(0);
+    const perMonth = new Map();
+    for (const s of inRange) {
+      perWeekday[weekday(s.played_at)] += 1;
+      const m = s.played_at.slice(0, 7);
+      perMonth.set(m, (perMonth.get(m) || 0) + 1);
+    }
+    const topWeekday = inRange.length ? perWeekday.indexOf(Math.max(...perWeekday)) : null;
+    let topMonth = null;
+    for (const [m, n] of perMonth) if (!topMonth || n > topMonth.count) topMonth = { month: m, count: n };
+    return {
+      sessions: inRange.length,
+      days_played: days.length,
+      best_streak: bestStreak(days),
+      top_weekday: topWeekday,
+      per_weekday: perWeekday,
+      top_month: topMonth,
     };
   }
 
@@ -373,5 +443,6 @@
     bestStreak, currentStreak, streaks,
     basicCounts, weekBounds, weeklyComparison, trend, suggestedValues,
     gameSummary, gameStats, achievements, overview, calendarMonth,
+    isScheduled, perfectDays, activitySummary,
   };
 });
