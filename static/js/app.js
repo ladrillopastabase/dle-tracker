@@ -994,7 +994,6 @@ async function renderGames() {
     const c = cards[g.id];
     return `
       <li class="manage-row ${g.active ? "" : "inactive"}">
-        <span class="ls-perm">${g.active ? "-rwxr-xr-x" : "-r--r--r--"}</span>
         ${gicon(g, "lg")}
         <div class="grow">
           <a href="#/game/${g.id}"><b>${esc(g.name)}</b></a>

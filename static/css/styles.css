@@ -400,7 +400,6 @@ td.notes-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; whi
 .icon-status { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: -6px; }
 .icon-status .gicon { width: 32px; height: 32px; }
 .manage-row.inactive { opacity: 0.55; }
-.ls-perm { color: var(--muted); font-size: 0.8rem; }
 
 /* ------------------------------------------------------------ logros y barras ASCII */
 .achievements { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
