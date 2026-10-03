@@ -657,15 +657,11 @@ td.notes-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; whi
 .sync-form .form-error { flex-basis: 100%; margin: 0; }
 .sync-form input { flex: 1; min-width: 200px; }
 
-/* ------------------------------------------------------------ vincular dispositivos */
+/* ------------------------------------------------------------ sincronizar en la red local */
 .pair-modal { width: min(600px, calc(100vw - 32px)); }
 .pair-step { margin: 4px 0 10px; }
 .pair-show { display: grid; grid-template-columns: 220px 1fr; gap: 18px; align-items: center; margin-bottom: 12px; }
 .pair-how p { margin: 0 0 8px; }
-.pair-code {
-  font-size: 1.7rem; font-weight: 700; letter-spacing: 0.12em; color: var(--accent);
-  border: 1px dashed var(--border); padding: 6px 10px; text-align: center; user-select: all;
-}
 .qr { background: #fff; padding: 8px; width: 100%; max-width: 260px; margin: 0 auto; line-height: 0; }
 .qr svg { width: 100%; height: auto; display: block; }
 .pair-form { display: flex; gap: 8px; margin-bottom: 8px; }
@@ -674,12 +670,13 @@ td.notes-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; whi
 .pair-scan video { width: 100%; max-height: 280px; background: #000; object-fit: cover; }
 .pair-wait { display: flex; align-items: center; gap: 16px; margin: 6px 0 12px; }
 .pair-wait p { margin: 0 0 4px; }
-.peer-list { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 4px; }
+.pair-manual { margin-top: 8px; }
+.pair-manual summary { cursor: pointer; color: var(--text-2); font-size: 0.85rem; }
+.pair-manual .pair-form { margin-top: 8px; }
+.pair-manual input { font-size: 0.85rem; letter-spacing: 0; text-transform: none; }
 @media (max-width: 560px) {
   .pair-show { grid-template-columns: 1fr; }
-  .pair-code { font-size: 1.4rem; }
-}
-
+  
 /* ------------------------------------------------------------ móvil */
 @media (max-width: 760px) {
   .sidebar { display: none; }

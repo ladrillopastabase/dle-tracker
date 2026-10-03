@@ -63,9 +63,9 @@ datos se guardan en el navegador (`localStorage`), así que funciona en
 - **Personalización**: temas *phosphor*, *amber* y *paper* (claro) o según el
   sistema; **color de acento** (8 predefinidos o cualquiera); scanlines;
   mostrar u ocultar a Bit; tarjetas completas o compactas; nombre del prompt.
-- **Sincronizar dispositivos** (gratis, sin servidor propio): vinculando tus
-  dispositivos con un solo QR (o un código en el PC), que luego se reconectan
-  solos (WebRTC), o con un gist secreto de tu cuenta de GitHub (ver [Sincronizar](#sincronizar-entre-dispositivos)).
+- **Sincronizar dispositivos** (gratis, sin servidor propio): directamente por
+  tu Wi-Fi escaneando dos QR (WebRTC, sin servicios externos) o con un gist
+  secreto de tu cuenta de GitHub (ver [Sincronizar](#sincronizar-entre-dispositivos)).
 - **Datos**: exportar / importar JSON y borrar todo.
 - **Atajos de teclado**: `:` o `Ctrl+K` comandos, `1`–`8` navegan, `/` busca
   juegos nuevos, `r` gira la ruleta, `n` registra una partida, `Esc` cierra.
@@ -114,36 +114,36 @@ versión guardada y la siguiente ya la nueva (o recarga con `Ctrl+Shift+R`).
 
 ## Sincronizar entre dispositivos
 
-Hay dos formas, ambas gratis, en **config**; se pueden usar a la vez.
+Hay dos formas, ambas gratis, en **config**; se pueden usar a la vez. La de la red local no usa ningún servicio externo.
 
-### Vincular con un QR (WebRTC)
+### En la red local (QR, sin servicios externos)
 
-Los dispositivos se conectan **directamente** entre sí: tus datos no pasan por
-ningún servidor y no necesitas cuenta.
+Tu PC y tu celular se conectan **directamente por tu Wi-Fi** (WebRTC): sin
+cuentas, sin internet y sin ningún servidor; los datos no salen de tu red.
 
-1. En el PC: **config → 📡 vincular un dispositivo**. Aparece un QR y un código
-   como `K7P2Q-X9M4R`.
-2. En el celular: **escanea el QR con la cámara**. Se abre la app y se conectan
-   solos. En otro PC (sin cámara): **⌨ tengo un código** y escribe el código.
-3. Listo: quedan **vinculados**. Cada vez que dos de ellos tienen la app abierta
-   se reconectan solos, sin volver a escanear, y cada cambio llega al instante
-   (la barra de estado muestra `⇄ 1`, `⇄ 2`…). Se pueden vincular varios
-   dispositivos al mismo grupo.
+1. En un dispositivo: **config → 📡 mostrar QR**.
+2. En el otro: **📷 escanear QR** (o escanéalo con la cámara del celular, que
+   abre la app directamente). Mostrará su propio QR de respuesta.
+3. En el primero: **📷 escanear su QR** (con la cámara o la webcam). Si no
+   tiene cámara, copia el código del otro y pégalo en «sin cámara: pegar el código».
 
-Cómo funciona: del código salen (con PBKDF2) el nombre de una sala y una clave
-AES-GCM. Para encontrarse, los dispositivos se dejan mensajes en esa sala de
-[ntfy.sh](https://ntfy.sh) (servicio público y gratuito de mensajes): solo los
-datos de conexión WebRTC, **cifrados**; ntfy no ve tus juegos ni puede leer
-nada sin el código. Luego se conectan directamente y combinan sus datos. Los
-servidores STUN públicos (Google, Cloudflare) solo sirven para descubrir la
-dirección de red.
+Al conectarse se combinan los datos de ambos y, mientras las dos pestañas sigan
+abiertas, cada cambio llega al otro al instante (la barra de estado muestra
+`⇄ lan`). Al cerrar una pestaña hay que repetir los dos escaneos.
 
-Límites: ambos deben tener la app abierta a la vez (los celulares cortan la
-conexión en segundo plano; al volver a la pestaña se reconecta). Funciona mejor
-en la **misma red Wi-Fi**; entre redes distintas puede fallar tras NAT estrictos
-(datos móviles o redes corporativas), porque no hay servidor TURN de relevo. En
-ese caso usa el gist. Guarda el código en privado: quien lo tenga puede
-vincularse; **desvincular este** lo olvida en ese dispositivo.
+Detalles:
+
+- No hay servidores STUN/TURN ni de señalización: por eso los dos dispositivos
+  intercambian sus datos de conexión con los QR. Cada QR lleva solo lo
+  imprescindible de la SDP (usuario y clave ICE, huella DTLS, rol y direcciones
+  locales, ~120 caracteres) y se reconstruye al leerlo.
+- Para leer QR se usa `BarcodeDetector` si el navegador lo tiene (Android,
+  Mac) o [jsQR](https://github.com/cozmo/jsQR) (incluido en el repositorio,
+  Apache-2.0) en el resto (Windows, iPhone…). Se carga solo al escanear.
+- Ambos deben estar en la **misma red**. Las Wi-Fi de universidades,
+  cafeterías o de invitados suelen aislar los dispositivos entre sí; en ese caso
+  comparte datos desde el celular y conecta el PC a esa red. Si no se conectan
+  en 20 segundos, la app lo avisa.
 
 ### Gist de GitHub
 
@@ -208,7 +208,7 @@ Cubren las rachas (días consecutivos, varios juegos el mismo día, huecos,
 cambios de mes/año, bisiestos, racha viva si se jugó ayer), el lector de
 resultados compartidos, el catálogo (caché, sin conexión), la combinación de
 datos al sincronizar, la sincronización con gist (GitHub simulado), la
-vinculación por QR (códigos, cifrado, señalización y protocolo simulados), estadísticas,
+sincronización en la red local (códigos compactos, tiempo de espera y protocolo), estadísticas,
 tendencia, semana, calendario, CRUD de juegos y partidas, validaciones,
 persistencia al recargar, datos corruptos, exportar/importar e iconos.
 
@@ -222,11 +222,11 @@ static/
 ├── js/store.js        # Datos en localStorage + mini API con validación
 ├── js/catalog.js      # Catálogo de dles.aukspot.com (descarga y caché)
 ├── js/sync.js         # Combinar datos + sincronización con gist de GitHub
-├── js/pair.js         # Vincular dispositivos por QR (WebRTC + ntfy cifrado)
+├── js/pair.js         # Sincronizar en la red local (WebRTC + QR)
 ├── js/mascot.js       # Bit, la mascota en pixel art (SVG)
 ├── js/app.js          # Interfaz: rutas por hash (#/dashboard, #/game/1, …)
 ├── icons/             # Iconos de la app (PWA)
-└── vendor/            # Chart.js, qrcode-generator (MIT) y JetBrains Mono (OFL)
+└── vendor/            # Chart.js, qrcode-generator (MIT), jsQR (Apache-2.0) y JetBrains Mono (OFL)
 manifest.webmanifest   # App instalable
 sw.js                  # Service worker (sin conexión)
 tests/                 # node --test
