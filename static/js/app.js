@@ -20,13 +20,8 @@ const ROUTE_PATH = {
 };
 const NAV_ORDER = ["dashboard", "games", "roulette", "history", "stats", "calendar", "settings"];
 const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)");
-// El servidor calcula "hoy" (y las rachas) con la zona horaria del navegador.
-const TIMEZONE = (() => {
-  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { return ""; }
-})();
 
 const state = {
-  user: null,
   games: [],
   overview: null,
   today: localISO(new Date()),
@@ -125,23 +120,40 @@ function asciiBar(value, max, width = 16) {
   return `<span class="bar" aria-hidden="true">${"█".repeat(filled)}<span class="rest">${"░".repeat(width - filled)}</span></span>`;
 }
 
-/** Icono del juego: el favicon descargado o, si no hay, su emoji. */
+/** Candidatos de icono que quedan por probar después de `game.icon_url`. */
+function iconFallbacks(game) {
+  const all = DleStore.iconCandidates(game.url || "");
+  const i = all.indexOf(game.icon_url);
+  return i >= 0 ? all.slice(i + 1) : [];
+}
+
+/** Icono del juego: el de su web (con alternativas si falla) o, si no hay, su emoji. */
 function gicon(game, cls = "") {
   if (!game) return "";
   if (game.icon_url) {
-    return `<img class="gicon ${cls}" src="${esc(game.icon_url)}" alt="" data-emoji="${esc(game.icon)}" loading="lazy" decoding="async">`;
+    return `<img class="gicon ${cls}" src="${esc(game.icon_url)}" alt="" data-emoji="${esc(game.icon)}"
+      data-fallbacks="${esc(iconFallbacks(game).join(" "))}" referrerpolicy="no-referrer" loading="lazy" decoding="async">`;
   }
   return `<span class="gicon-emoji ${cls}" aria-hidden="true">${esc(game.icon)}</span>`;
 }
 
-// Si un favicon no carga (archivo borrado, etc.), se muestra el emoji.
+// Si un icono no carga, se prueba el siguiente candidato y, al final, el emoji.
 document.addEventListener("error", (e) => {
-  const img = e.target;
-  if (img instanceof HTMLImageElement && img.classList.contains("gicon")) {
+  const el = e.target;
+  const isImg = el instanceof HTMLImageElement && el.classList.contains("gicon");
+  const isSvgImage = el instanceof SVGImageElement && el.dataset.fallbacks !== undefined;
+  if (!isImg && !isSvgImage) return;
+  const [next, ...rest] = (el.dataset.fallbacks || "").split(" ").filter(Boolean);
+  if (next) {
+    el.dataset.fallbacks = rest.join(" ");
+    el.setAttribute(isImg ? "src" : "href", next);
+  } else if (isImg) {
     const span = document.createElement("span");
-    span.className = img.className.replace("gicon", "gicon-emoji");
-    span.textContent = img.dataset.emoji || "🎮";
-    img.replaceWith(span);
+    span.className = el.className.replace("gicon", "gicon-emoji");
+    span.textContent = el.dataset.emoji || "🎮";
+    el.replaceWith(span);
+  } else {
+    el.remove();
   }
 }, true);
 
@@ -150,7 +162,7 @@ function cssVar(name) {
 }
 
 function userName() {
-  return state.user?.username || "guest";
+  try { return localStorage.getItem("dle-user") || "player"; } catch { return "player"; }
 }
 
 /* ================================================================ piezas de UI */
@@ -193,33 +205,28 @@ function typewrite(el) {
 
 /* ================================================================ API */
 
-/** La sesión no existe o caducó: hay que mostrar el login. */
-class AuthRequired extends Error {}
-
-async function api(path, options = {}) {
-  const init = { ...options, headers: { "X-Timezone": TIMEZONE, ...(options.headers || {}) } };
-  if (init.body && typeof init.body !== "string") {
-    init.body = JSON.stringify(init.body);
-    init.headers["Content-Type"] = "application/json";
-  }
-  let response;
+/* Los datos viven en localStorage (store.js). Si el navegador no lo permite
+   (p. ej. modo privado estricto), se usa memoria y se avisa. */
+const STORAGE = (() => {
   try {
-    response = await fetch(path, init);
+    const probe = "dle-tracker:probe";
+    localStorage.setItem(probe, "1");
+    localStorage.removeItem(probe);
+    return localStorage;
   } catch {
-    throw new Error("No se pudo conectar con el servidor. ¿Está en ejecución?");
+    setTimeout(() => toast("Este navegador no permite guardar datos: se perderán al cerrar la pestaña.", "error"), 500);
+    return DleStore.memoryStorage();
   }
-  if (response.status === 204) return null;
-  if (response.status === 401 && !path.startsWith("/api/auth/")) {
-    state.user = null;
-    showLogin();
-    throw new AuthRequired("Inicia sesión para continuar");
+})();
+const store = DleStore.create(STORAGE);
+
+/** Misma interfaz que la antigua API REST, pero resuelta en el navegador. */
+async function api(path, options = {}) {
+  try {
+    return store.request(options.method || "GET", path, options.body);
+  } catch (err) {
+    throw new Error(err.message);
   }
-  const data = await response.json().catch(() => null);
-  if (!response.ok) {
-    const detail = data?.detail;
-    throw new Error(typeof detail === "string" ? detail : `Error ${response.status}`);
-  }
-  return data;
 }
 
 async function loadGames() {
@@ -440,15 +447,6 @@ async function router() {
   });
   destroyCharts();
   const view = $("#view");
-  if (!state.user) {
-    try {
-      state.user = await api("/api/auth/me");
-    } catch {
-      showLogin();
-      return;
-    }
-  }
-  document.body.classList.remove("logged-out");
   $("#titlebar-text").textContent = `${userName()}@dle: ${ROUTE_PATH[name]}`;
   try {
     await loadGames();
@@ -458,90 +456,11 @@ async function router() {
     $$("[data-text]", view).forEach(typewrite);
     afterRender[name]?.(param);
   } catch (err) {
-    if (err instanceof AuthRequired) return;
     view.innerHTML = `<div class="view">${pane("error", `<p class="c-loss">${esc(err.message)}</p>`)}</div>`;
   }
 }
 
 const refresh = () => router();
-
-/* ================================================================ login */
-
-function showLogin(mode = "login") {
-  document.querySelectorAll("dialog[open]").forEach((d) => d.close());
-  document.body.classList.add("logged-out");
-  destroyCharts();
-  $("#titlebar-text").textContent = "dle-tracker: login";
-  const register = mode === "register";
-  $("#view").innerHTML = `
-    <div class="view login">
-      ${pane(register ? "useradd" : "tty1", `
-        <div class="login-head">
-          <span data-mascot="${register ? "happy" : "idle"}" data-scale="7"></span>
-          <div>
-            <div class="accent"><b>dle_tracker</b> <span class="muted">3.0 (tty1)</span></div>
-            <p class="dim small">Registra tus juegos diarios, rachas y estadísticas.<br>Cada cuenta tiene sus propios datos.</p>
-          </div>
-        </div>
-        <form id="login-form" novalidate autocomplete="on">
-          <div class="form-error" role="alert" hidden></div>
-          <label class="login-line"><span>${register ? "nuevo usuario:" : "dle login:"}</span>
-            <input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="30" required></label>
-          <label class="login-line"><span>${register ? "contraseña:" : "password:"}</span>
-            <input name="password" type="password" autocomplete="${register ? "new-password" : "current-password"}" maxlength="128" required></label>
-          ${register ? `<label class="login-line"><span>repetir:</span>
-            <input name="password2" type="password" autocomplete="new-password" maxlength="128" required></label>
-            <p class="muted small">usuario: 3-30 caracteres (a-z, 0-9, _ . -) · contraseña: mínimo 8</p>` : ""}
-          <div class="card-actions" style="margin-top:14px">
-            <button class="btn primary big" type="submit">${register ? "crear cuenta ⏎" : "entrar ⏎"}</button>
-            <button class="btn" type="button" data-login-mode="${register ? "login" : "register"}">
-              ${register ? "ya tengo cuenta" : "crear cuenta"}</button>
-          </div>
-        </form>`)}
-    </div>`;
-  Mascot.mountAll($("#view"));
-  const form = $("#login-form");
-  form.elements.username.focus();
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const el = form.elements;
-    const username = el.username.value.trim();
-    const password = el.password.value;
-    if (!username || !password) return showFormError(form, "Escribe usuario y contraseña.");
-    if (register && password !== el.password2.value) return showFormError(form, "Las contraseñas no coinciden.");
-    const submit = form.querySelector('button[type="submit"]');
-    submit.disabled = true;
-    try {
-      state.user = await api(`/api/auth/${register ? "register" : "login"}`, { method: "POST", body: { username, password } });
-      if (!location.hash || register) history.replaceState(null, "", "#/dashboard");
-      router();
-      if (register) toast(`bienvenido/a, ${state.user.username}`);
-    } catch (err) {
-      showFormError(form, register ? err.message : `Login incorrect · ${err.message}`);
-      el.password.value = "";
-      el.password.focus();
-    } finally {
-      submit.disabled = false;
-    }
-  });
-}
-
-/** Olvida todo lo del usuario anterior al cerrar sesión. */
-function resetState() {
-  Object.assign(state, {
-    user: null, games: [], overview: null, calendar: null,
-    history: { game_id: "", result: "", date_from: "", date_to: "", order: "desc" },
-    roulette: { onlyPending: true, rotation: 0, spinning: false, autoSpin: false, log: [], result: null },
-  });
-  $("#status-right").textContent = "";
-}
-
-async function logout() {
-  try { await api("/api/auth/logout", { method: "POST" }); } catch { /* da igual: se cierra igual */ }
-  resetState();
-  history.replaceState(null, "", "#/dashboard");
-  showLogin();
-}
 
 window.addEventListener("hashchange", () => {
   router();
@@ -812,7 +731,7 @@ function wheelSvg(games) {
     // El icono va hacia el borde de la rueda y el nombre más al centro.
     const rot = `rotate(${i * per - 90})`;
     const icon = g.icon_url
-      ? `<image href="${esc(g.icon_url)}" x="-12" y="-12" width="24" height="24" transform="${rot} translate(${R * 0.83} 0) rotate(90)" preserveAspectRatio="xMidYMid meet"/>`
+      ? `<image href="${esc(g.icon_url)}" data-fallbacks="${esc(iconFallbacks(g).join(" "))}" x="-12" y="-12" width="24" height="24" transform="${rot} translate(${R * 0.83} 0) rotate(90)" preserveAspectRatio="xMidYMid meet"/>`
       : `<text transform="${rot} translate(${R * 0.83} 0) rotate(90)" text-anchor="middle">${esc(g.icon)}</text>`;
     const label = `${icon}<text data-seg-label="${i}" transform="${rot} translate(${R * 0.52} 0)" text-anchor="middle">${esc(name)}</text>`;
     return shape + label;
@@ -1231,20 +1150,22 @@ async function renderSettings() {
           </div>`)}
       </div>
       <div class="stack">
-        ${pane("sesión", `
-          ${kv([["whoami", `<b>${esc(userName())}</b>`], ["zona horaria", esc(TIMEZONE || "del servidor")]])}
-          <div class="card-actions" style="margin-top:10px"><button class="btn" data-logout>logout</button></div>`)}
+        ${pane("usuario", `
+          <label class="field">nombre en el prompt
+            <input id="user-input" maxlength="20" value="${esc(userName())}" autocomplete="off" spellcheck="false">
+          </label>`)}
         ${pane("datos", `
-          <p class="dim small">Tus juegos y partidas se guardan en el servidor, separados de los de otras cuentas.</p>
-          <button class="btn primary" id="export-btn">⬇ exportar json</button>`)}
+          <p class="dim small">Tus juegos y partidas se guardan <b>solo en este navegador</b> (localStorage).
+          Exporta una copia para no perderlos o para pasarlos a otro dispositivo.</p>
+          <div class="card-actions">
+            <button class="btn primary" id="export-btn">⬇ exportar json</button>
+            <button class="btn" id="import-btn">⬆ importar json</button>
+            <input type="file" id="import-file" accept="application/json,.json" hidden>
+          </div>
+          <p class="muted small">Importar reemplaza los datos actuales. Acepta copias de esta app y de la versión con servidor.</p>`)}
         ${pane("zona peligrosa", `
-          <form id="delete-account-form" novalidate>
-            <div class="form-error" role="alert" hidden></div>
-            <p class="dim small">Elimina tu cuenta y <b>todos</b> tus datos. No se puede deshacer.</p>
-            <label class="field">confirma con tu contraseña
-              <input name="password" type="password" autocomplete="current-password" maxlength="128"></label>
-            <button class="btn danger" type="submit">userdel -r ${esc(userName())}</button>
-          </form>`)}
+          <p class="dim small">Borra todos los juegos y partidas de este navegador y vuelve a los juegos de ejemplo.</p>
+          <button class="btn danger" id="reset-btn">rm -rf ~/.dle</button>`)}
         ${pane("atajos", kv([
           ["1-7", "navegar entre secciones"],
           ["r", "girar la ruleta"],
@@ -1262,22 +1183,42 @@ afterRender.settings = () => {
     if (e.target.value === "off") document.documentElement.dataset.crt = "off";
     else delete document.documentElement.dataset.crt;
   });
-  const delForm = $("#delete-account-form");
-  delForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const password = delForm.elements.password.value;
-    if (!password) return showFormError(delForm, "Escribe tu contraseña.");
-    const ok = await confirmDialog(`userdel -r ${userName()}`, "Se eliminarán tu cuenta, tus juegos y todas tus partidas. No se puede deshacer.", "eliminar cuenta");
+  $("#user-input").addEventListener("change", (e) => {
+    const value = e.target.value.trim().replace(/\s+/g, "_");
+    writePref("dle-user", value || null);
+    toast(`usuario: ${userName()}`);
+    refresh();
+  });
+  $("#import-btn").addEventListener("click", () => $("#import-file").click());
+  $("#import-file").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    let payload;
+    try {
+      payload = JSON.parse(await file.text());
+    } catch {
+      return toast("El archivo no es un JSON válido", "error");
+    }
+    const ok = await confirmDialog("importar copia", `Se reemplazarán todos tus datos actuales por los de «${file.name}».`, "importar");
     if (!ok) return;
     try {
-      await api("/api/auth/me", { method: "DELETE", body: { password } });
-      resetState();
-      history.replaceState(null, "", "#/dashboard");
-      showLogin();
-      toast("cuenta eliminada");
+      const r = await api("/api/import", { method: "POST", body: payload });
+      toast(`importados ${r.games} juego(s) y ${r.sessions} partida(s)`);
+      refresh();
     } catch (err) {
-      showFormError(delForm, err.message);
+      toast(err.message, "error");
     }
+  });
+  $("#reset-btn").addEventListener("click", async () => {
+    const ok = await confirmDialog("rm -rf ~/.dle", "Se borrarán todos tus juegos y partidas de este navegador. Exporta una copia antes si quieres conservarlos.", "borrar todo");
+    if (!ok) return;
+    await api("/api/reset", { method: "POST" });
+    state.calendar = null;
+    state.roulette.log = [];
+    state.roulette.result = null;
+    toast("datos borrados");
+    refresh();
   });
   $("#export-btn").addEventListener("click", async () => {
     try {
@@ -1334,7 +1275,7 @@ function renderIconStatus(game) {
     return;
   }
   box.innerHTML = game.icon_url
-    ? `${gicon(game, "xl")} <span class="dim">descargado de la url</span>
+    ? `${gicon(game, "xl")} <span class="dim">obtenido de la web del juego</span>
        <button type="button" class="btn" data-icon-refresh="${game.id}">↻ actualizar</button>
        <button type="button" class="btn danger" data-icon-remove="${game.id}">quitar</button>`
     : `<span class="muted">sin icono descargado: se usa el emoji</span>
@@ -1578,8 +1519,6 @@ document.addEventListener("click", async (e) => {
     else if (d.editSession) await openSessionForm({ session: await api(`/api/sessions/${d.editSession}`) });
     else if (d.deleteSession) await deleteSession(d.deleteSession);
     else if ("spinLink" in d) state.roulette.autoSpin = true;
-    else if ("logout" in d) await logout();
-    else if (d.loginMode) showLogin(d.loginMode);
     else if ("fetchIcons" in d) {
       t.disabled = true;
       t.textContent = "buscando…";
@@ -1631,7 +1570,7 @@ document.addEventListener("click", async (e) => {
 /* Atajos de teclado: 1-7 navegan, r gira la ruleta, n registra partida. */
 document.addEventListener("keydown", (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
-  if (!state.user || document.querySelector("dialog[open]")) return;
+  if (document.querySelector("dialog[open]")) return;
   if (e.target.closest("input, select, textarea, [contenteditable]")) return;
   const n = Number(e.key);
   if (n >= 1 && n <= NAV_ORDER.length) {

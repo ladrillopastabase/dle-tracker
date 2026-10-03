@@ -1,8 +1,2 @@
-__pycache__/
-*.pyc
-.pytest_cache/
-.venv/
-venv/
-data/*.db
-data/*.db-*
-data/icons/
+node_modules/
+.DS_Store

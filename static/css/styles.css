@@ -5,13 +5,13 @@
 
 @font-face {
   font-family: "JetBrains Mono";
-  src: url("/static/vendor/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2");
+  src: url("../vendor/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2");
   font-weight: 400;
   font-display: swap;
 }
 @font-face {
   font-family: "JetBrains Mono";
-  src: url("/static/vendor/fonts/jetbrains-mono-latin-700-normal.woff2") format("woff2");
+  src: url("../vendor/fonts/jetbrains-mono-latin-700-normal.woff2") format("woff2");
   font-weight: 700;
   font-display: swap;
 }
@@ -478,23 +478,12 @@ td.notes-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; whi
 
 .trend { font-weight: 700; }
 
-/* ------------------------------------------------------------ login */
-.logged-out .sidebar, .logged-out .sb-tabs, .logged-out .sb-right { display: none; }
-.login { max-width: 560px; margin: 6vh auto 0; }
-.login-head { display: flex; gap: 18px; align-items: center; margin-bottom: 18px; }
-.login-head p { margin: 4px 0 0; }
-.login-line { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; color: var(--accent); font-weight: 700; }
-.login-line span { min-width: 15ch; }
-.login-line input { flex: 1; }
-
 /* ------------------------------------------------------------ móvil */
 @media (max-width: 760px) {
   .sidebar { display: none; }
   .titlebar .dots { display: none; }
   .content { padding: 18px 16px 32px; }
   .sb-right, .sb-session { display: none; }
-  .login-line { flex-direction: column; align-items: stretch; gap: 4px; }
-  .login-head [data-mascot] svg { width: 64px; height: auto; }
   .statusbar { height: 40px; font-size: 0.85rem; }
   .sb-tabs a { padding: 6px 8px; }
   .roulette { grid-template-columns: minmax(0, 1fr); }

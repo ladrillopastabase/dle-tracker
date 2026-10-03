@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>dle@tracker</title>
+  <meta name="description" content="Registra tus juegos diarios tipo Wordle: rachas, estadísticas y ruleta. Los datos se guardan en tu navegador.">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%230b0f0b'/><text x='2' y='12' font-family='monospace' font-size='11' fill='%234af626'>&gt;_</text></svg>">
   <script>
     // Aplica tema y efectos antes de pintar para evitar parpadeo.
@@ -13,7 +14,7 @@
       if (localStorage.getItem("dle-crt") === "off") document.documentElement.dataset.crt = "off";
     } catch (e) {}
   </script>
-  <link rel="stylesheet" href="/static/css/styles.css">
+  <link rel="stylesheet" href="static/css/styles.css">
 </head>
 <body>
   <div class="screen">
@@ -159,8 +160,10 @@
 
   <div id="toasts" class="toasts" aria-live="assertive"></div>
 
-  <script src="/static/vendor/chart.umd.min.js"></script>
-  <script src="/static/js/mascot.js"></script>
-  <script src="/static/js/app.js"></script>
+  <script src="static/vendor/chart.umd.min.js"></script>
+  <script src="static/js/logic.js"></script>
+  <script src="static/js/store.js"></script>
+  <script src="static/js/mascot.js"></script>
+  <script src="static/js/app.js"></script>
 </body>
 </html>

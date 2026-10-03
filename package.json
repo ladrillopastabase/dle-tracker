@@ -1,0 +1,9 @@
+{
+  "name": "dle-tracker",
+  "private": true,
+  "description": "Tracker de juegos diarios tipo Wordle. Web estática con datos en localStorage.",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "start": "python3 -m http.server 8000"
+  }
+}
