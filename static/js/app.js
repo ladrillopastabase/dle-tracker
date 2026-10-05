@@ -592,6 +592,7 @@ async function router() {
     if (param) setTimeout(() => handlePairCode(decodeURIComponent(param)), 0);
   }
   if (!routes[name]) name = "dashboard";
+  if (name !== "roulette" && $("#roulette-dialog").open) $("#roulette-dialog").close();
   state.route = name;
   const navName = name === "game" ? "games" : name;
   $$("[data-route]").forEach((a) => {
@@ -961,6 +962,20 @@ async function renderDiscover() {
         <button class="btn" data-catalog-refresh title="Actualizado: ${esc(updated)}">↻ actualizar</button>`,
     })}
     ${notice}
+    <div class="discover-bar">
+      <div class="prompt"><span class="u">$</span> <span class="cmd" id="grep-cmd">grep -i "${esc(d.q)}" catalogo.json</span></div>
+      <div class="discover-filters">
+        <label class="field search-field"><span class="sr-only">buscar</span>
+          <input type="search" id="discover-q" value="${esc(d.q)}" placeholder="🔍 buscar por nombre, tema o descripción (en inglés)…  [/]" autocomplete="off" aria-label="buscar juegos">
+        </label>
+        <label class="check"><input type="checkbox" id="hide-added" ${d.hideAdded ? "checked" : ""}> ocultar los que ya tengo</label>
+      </div>
+      <div class="segmented chips-row" id="cat-chips" role="radiogroup" aria-label="Categoría">
+        <label><input type="radio" name="cat" value="" ${d.cat ? "" : "checked"}><span>todas <span class="muted">${c.games.length}</span></span></label>
+        ${chips}
+      </div>
+    </div>
+    <div id="discover-featured" ${d.q || d.cat ? "hidden" : ""}>
     ${weekly.length ? `<section class="section">
       <div class="section-head"><div class="prompt"><span class="u">$</span> <span class="cmd">cat destacados_de_la_semana</span></div>
         <span class="muted small">semana del ${fmtDate(c.weekly.date, { relative: false })}</span></div>
@@ -970,18 +985,9 @@ async function renderDiscover() {
       <div class="section-head"><div class="prompt"><span class="u">$</span> <span class="cmd">ls -t nuevos/ | head</span></div></div>
       <div class="game-grid">${fresh.map(([g, date]) => catalogCard(g, isAdded(g), { badge: `<span class="tag info">nuevo · ${fmtDate(date, { relative: false })}</span>` })).join("")}</div>
     </section>` : ""}
+    </div>
     <section class="section">
-      <div class="section-head"><div class="prompt"><span class="u">$</span> <span class="cmd" id="grep-cmd">grep -i "${esc(d.q)}" catalogo.json</span></div></div>
-      <div class="discover-filters">
-        <label class="field search-field">buscar <kbd>/</kbd>
-          <input type="search" id="discover-q" value="${esc(d.q)}" placeholder="nombre, tema o descripción (en inglés)…" autocomplete="off">
-        </label>
-        <label class="check"><input type="checkbox" id="hide-added" ${d.hideAdded ? "checked" : ""}> ocultar los que ya tengo</label>
-      </div>
-      <div class="segmented chips-row" id="cat-chips" role="radiogroup" aria-label="Categoría">
-        <label><input type="radio" name="cat" value="" ${d.cat ? "" : "checked"}><span>todas <span class="muted">${c.games.length}</span></span></label>
-        ${chips}
-      </div>
+      <div class="section-head"><div class="prompt"><span class="u">$</span> <span class="cmd">ls catalogo/</span></div></div>
       <div id="discover-results">${discoverResultsHtml()}</div>
     </section>
     <p class="muted small credit">Catálogo: <a href="${DleCatalog.SITE}" target="_blank" rel="noopener">dles.aukspot.com</a>
@@ -993,6 +999,9 @@ function refreshDiscoverResults() {
   if (!box) return;
   box.innerHTML = discoverResultsHtml();
   $("#grep-cmd").textContent = `grep -i "${state.discover.q}" catalogo.json`;
+  // Al buscar o filtrar, los resultados van primero: se ocultan destacados y novedades.
+  const featured = $("#discover-featured");
+  if (featured) featured.hidden = !!(state.discover.q.trim() || state.discover.cat);
 }
 
 afterRender.discover = () => {
@@ -1389,6 +1398,7 @@ function spinRoulette() {
       if (state.route !== "roulette") return;
       // Solo se actualizan los paneles; la tira se queda en el ganador.
       $("#spin-btn").disabled = false;
+      openRoulettePopup(winner);
       $("#roulette-result").innerHTML = `
         <div class="result-row"><span data-mascot="happy" data-scale="5"></span>
           <div class="grow"><div class="result-name">${gicon(winner, "xl")} ${esc(winner.name)}</div>
@@ -1413,6 +1423,49 @@ function spinRoulette() {
     finish();
   }
 }
+
+/** El juego elegido, en grande: Bit lo anuncia y desde ahí se juega o se anota. */
+function openRoulettePopup(game) {
+  const o = state.overview;
+  const card = o?.games?.find((x) => x.game_id === game.id);
+  const cat = game.category ? `${esc(game.category)} · ` : "";
+  const today = card?.played_today ? '<span class="c-win">✓ ya jugado hoy</span>'
+    : o?.pending_today?.includes(game.id) ? '<span class="c-info">pendiente hoy</span>' : '<span class="muted">descansa hoy</span>';
+  const lines = [`¡Hoy toca <b>${esc(game.name)}</b>!`, `Mi elección: <b>${esc(game.name)}</b>. ¡Suerte!`, `¿Listo? <b>${esc(game.name)}</b> te espera.`];
+  $("#roulette-pop").innerHTML = `
+    <div class="pop-hero">
+      <span class="pop-bit" data-mascot="happy" data-scale="7"></span>
+      <div class="speech"><span>${lines[Math.floor(Math.random() * lines.length)]}</span></div>
+    </div>
+    <div class="pop-game">
+      ${gicon(game, "xl")}
+      <div class="grow">
+        <div class="pop-name">${esc(game.name)}</div>
+        <p class="muted small">${cat}${today}</p>
+        ${game.description ? `<p class="dim small">${esc(game.description)}</p>` : ""}
+      </div>
+    </div>
+    <footer class="modal-foot pop-actions">
+      <button type="button" class="btn ghost" data-respin>🎲 otra vez</button>
+      <button type="button" class="btn" data-log="${game.id}">+ registrar</button>
+      ${game.url ? `<a class="btn primary big" href="${esc(game.url)}" target="_blank" rel="noopener noreferrer" data-play="${game.id}">▶ jugar ahora</a>` : ""}
+    </footer>`;
+  Mascot.mountAll($("#roulette-pop"));
+  const dialog = $("#roulette-dialog");
+  if (!dialog.open) dialog.showModal();
+  dialog.querySelector("[data-play]")?.focus();
+}
+
+$("#roulette-dialog").addEventListener("click", (e) => {
+  const t = e.target.closest("button, a");
+  if (!t) return;
+  // Jugar o registrar: se cierra el popup y sigue la acción global (abrir el juego / el formulario).
+  if ("play" in t.dataset || "log" in t.dataset) $("#roulette-dialog").close();
+  if ("respin" in t.dataset) {
+    $("#roulette-dialog").close();
+    spinRoulette();
+  }
+});
 
 afterRender.roulette = () => {
   const r = state.roulette;

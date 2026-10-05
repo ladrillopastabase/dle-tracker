@@ -177,7 +177,6 @@ code, kbd { font-family: var(--font); }
 .nav-link.active::before { content: ">"; color: var(--accent-ink); }
 .nav-link kbd { color: var(--muted); font-size: 0.75rem; }
 .nav-link.active kbd { color: var(--accent-ink); }
-.nav-settings { margin-top: 8px; }
 .nav-help { margin: auto 8px 0; line-height: 1.7; }
 
 .content { flex: 1; min-width: 0; padding: 22px clamp(16px, 2.5vw, 40px) 48px; outline: none; }
@@ -326,6 +325,8 @@ textarea { resize: vertical; }
 .segmented input { position: absolute; opacity: 0; pointer-events: none; }
 .segmented span { display: block; text-align: center; padding: 7px; border: 1px solid var(--line-2); color: var(--text-2); }
 .segmented label:hover span { border-color: var(--text-2); }
+.segmented span span { display: inline; padding: 0; border: 0; background: none; } /* contadores dentro de una opción */
+.segmented input:checked + span .muted { color: inherit; opacity: 0.75; }
 .segmented input:focus-visible + span { outline: 1px dashed var(--accent); outline-offset: 2px; }
 .segmented input[value="win"]:checked + span { background: var(--win); border-color: var(--win); color: var(--bg); font-weight: 700; }
 .segmented input[value="loss"]:checked + span { background: var(--loss); border-color: var(--loss); color: var(--bg); font-weight: 700; }
@@ -527,6 +528,17 @@ td.notes-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; whi
 .search-field { flex: 1; min-width: 220px; margin: 0; }
 .search-field kbd { color: var(--muted); }
 .chips-row { display: flex !important; flex-wrap: wrap; gap: 6px; margin-bottom: 22px; }
+/* Barra de búsqueda de descubrir: arriba y fija bajo la barra de título al desplazarse. */
+.discover-bar {
+  position: sticky; top: 33px; z-index: 20;
+  margin: 0 -4px 18px; padding: 10px 4px 10px;
+  background: var(--bg); border-bottom: 1px solid var(--line);
+}
+.discover-bar .discover-filters { margin-bottom: 10px; }
+.discover-bar #discover-q { font-size: 1rem; padding: 10px 12px; }
+.discover-bar .chips-row { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; margin-bottom: 0; padding-bottom: 4px; }
+.discover-bar .chips-row label { flex: none; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .chips-row span { padding: 3px 9px; font-size: 0.8rem; }
 .cat-card { gap: 8px; display: flex; flex-direction: column; }
 .cat-card .cat-desc { margin: 0; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; min-height: 3.6em; }
@@ -656,6 +668,26 @@ td.notes-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; whi
 .sync-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
 .sync-form .form-error { flex-basis: 100%; margin: 0; }
 .sync-form input { flex: 1; min-width: 200px; }
+
+/* ------------------------------------------------------------ ruleta: popup del elegido */
+.roulette-modal { width: min(520px, calc(100vw - 32px)); }
+.pop-hero { display: flex; align-items: center; gap: 18px; margin: 4px 0 16px; }
+.pop-hero .speech { margin-top: 0; flex: 1; }
+.pop-bit { flex: none; animation: pop-bounce 0.9s ease-in-out infinite alternate; }
+@keyframes pop-bounce { from { transform: translateY(0); } to { transform: translateY(-6px); } }
+.pop-game {
+  display: flex; gap: 14px; align-items: flex-start;
+  border: 1px solid var(--accent); padding: 14px; background: var(--surface-2);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.pop-name { font-size: 1.35rem; font-weight: 700; color: var(--accent); margin-bottom: 2px; }
+.pop-game p { margin: 2px 0 0; }
+.pop-actions { flex-wrap: wrap; }
+@media (max-width: 560px) {
+  .pop-actions { flex-direction: column-reverse; align-items: stretch; }
+  .pop-actions .btn { text-align: center; justify-content: center; }
+}
+@media (prefers-reduced-motion: reduce) { .pop-bit { animation: none; } }
 
 /* ------------------------------------------------------------ sincronizar en la red local */
 .pair-modal { width: min(600px, calc(100vw - 32px)); }

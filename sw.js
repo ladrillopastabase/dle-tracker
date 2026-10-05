@@ -2,7 +2,7 @@
    Estrategia "stale-while-revalidate" para los archivos propios: se sirve lo
    guardado al instante y se actualiza en segundo plano para la próxima visita.
    Lo externo (catálogo en GitHub, iconos de otras webs) no pasa por aquí. */
-const CACHE = "dle-tracker-v8";
+const CACHE = "dle-tracker-v9";
 const SHELL = [
   "./",
   "index.html",

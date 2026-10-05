@@ -63,14 +63,14 @@
     <footer class="statusbar" aria-label="Barra de estado">
       <span class="sb-session">[dle]</span>
       <nav class="sb-tabs" aria-label="Navegación">
-        <a href="#/dashboard" data-route="dashboard">0:inicio</a>
-        <a href="#/games" data-route="games">1:juegos</a>
-        <a href="#/discover" data-route="discover">2:+juegos</a>
-        <a href="#/roulette" data-route="roulette">3:ruleta</a>
-        <a href="#/history" data-route="history">4:hist</a>
-        <a href="#/stats" data-route="stats">5:stats</a>
-        <a href="#/calendar" data-route="calendar">6:cal</a>
-        <a href="#/settings" data-route="settings">7:cfg</a>
+        <a href="#/dashboard" data-route="dashboard">1:inicio</a>
+        <a href="#/games" data-route="games">2:juegos</a>
+        <a href="#/discover" data-route="discover">3:+juegos</a>
+        <a href="#/roulette" data-route="roulette">4:ruleta</a>
+        <a href="#/history" data-route="history">5:hist</a>
+        <a href="#/stats" data-route="stats">6:stats</a>
+        <a href="#/calendar" data-route="calendar">7:cal</a>
+        <a href="#/settings" data-route="settings">8:cfg</a>
       </nav>
       <span class="sb-right" id="status-right"></span>
     </footer>
@@ -208,7 +208,16 @@
     </form>
   </dialog>
 
-  <!-- Emparejar dispositivos (WebRTC) -->
+  <!-- Ruleta: el juego elegido -->
+  <dialog id="roulette-dialog" class="modal roulette-modal" aria-labelledby="roulette-title">
+    <header class="modal-head">
+      <h2 id="roulette-title">¡te tocó!</h2>
+      <button type="button" class="icon-btn" data-close aria-label="Cerrar">[x]</button>
+    </header>
+    <div id="roulette-pop" aria-live="polite"></div>
+  </dialog>
+
+  <!-- Sincronizar en la red local (WebRTC) -->
   <dialog id="pair-dialog" class="modal pair-modal" aria-labelledby="pair-title">
     <header class="modal-head">
       <h2 id="pair-title">sincronizar en la red local</h2>
