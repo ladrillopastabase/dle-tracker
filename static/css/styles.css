@@ -545,8 +545,6 @@ td.notes-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; whi
 .cat-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
 .cat-card.added { opacity: 0.6; }
 .cat-card.highlight { border-color: var(--accent); box-shadow: 0 0 18px var(--glow); }
-.suggestion { display: grid; gap: 22px; margin-bottom: 22px; max-width: 520px; }
-.suggestion .speech { margin-top: 0; }
 .more { text-align: center; margin-top: 18px; }
 .credit { margin-top: 30px; }
 

@@ -36,7 +36,7 @@ const state = {
   history: { game_id: "", result: "", date_from: "", date_to: "", order: "desc" },
   calendar: null, // {year, month, selected}
   roulette: { pool: "pending", spinning: false, autoSpin: false, log: [], result: null },
-  discover: { q: "", cat: "", hideAdded: true, limit: 48, suggestion: null, catalog: null, focus: false },
+  discover: { q: "", cat: "", hideAdded: true, limit: 48, catalog: null, focus: false, surprise: false },
 };
 
 function localISO(d) {
@@ -593,6 +593,7 @@ async function router() {
   }
   if (!routes[name]) name = "dashboard";
   if (name !== "roulette" && $("#roulette-dialog").open) $("#roulette-dialog").close();
+  if (name !== "discover" && $("#surprise-dialog").open) $("#surprise-dialog").close();
   state.route = name;
   const navName = name === "game" ? "games" : name;
   $$("[data-route]").forEach((a) => {
@@ -917,12 +918,7 @@ function discoverResultsHtml() {
   const isAdded = catalogAddedIndex();
   const list = filteredCatalog();
   const shown = list.slice(0, d.limit);
-  const suggestion = d.suggestion && d.catalog.games.find((g) => g.id === d.suggestion);
   return `
-    ${suggestion ? `<div class="suggestion">
-        <div class="speech"><span>¿Qué tal <b>${esc(suggestion.name)}</b>? ${esc(DleCatalog.categoryInfo(suggestion.category).label)}, y no lo tienes todavía.</span></div>
-        ${catalogCard(suggestion, isAdded(suggestion), { highlight: true })}
-      </div>` : ""}
     <p class="muted small">${list.length} resultado(s)${d.q ? ` para «${esc(d.q)}»` : ""}</p>
     ${shown.length ? `<div class="game-grid">${shown.map((g) => catalogCard(g, isAdded(g))).join("")}</div>` : '<p class="empty">nada por aquí: prueba otra búsqueda o categoría</p>'}
     ${list.length > shown.length ? `<div class="more"><button class="btn" data-more>ver ${Math.min(48, list.length - shown.length)} más</button></div>` : ""}`;
@@ -1014,7 +1010,6 @@ afterRender.discover = () => {
     timer = setTimeout(() => {
       d.q = q.value;
       d.limit = 48;
-      d.suggestion = null;
       refreshDiscoverResults();
     }, 120);
   });
@@ -1025,7 +1020,6 @@ afterRender.discover = () => {
   $("#cat-chips").addEventListener("change", (e) => {
     d.cat = e.target.value;
     d.limit = 48;
-    d.suggestion = null;
     refreshDiscoverResults();
   });
   if (d.focus) {
@@ -1033,7 +1027,61 @@ afterRender.discover = () => {
     q.focus();
     q.select();
   }
+  if (d.surprise) {
+    d.surprise = false;
+    openSurprisePopup();
+  }
 };
+
+/** «Sorpréndeme»: Bit elige un juego del catálogo que aún no tienes (respetando la búsqueda y categoría). */
+function openSurprisePopup(avoid = null) {
+  const d = state.discover;
+  if (!d.catalog) return;
+  const isAdded = catalogAddedIndex();
+  let pool = filteredCatalog().filter((g) => !isAdded(g));
+  if (!pool.length) pool = d.catalog.games.filter((g) => !isAdded(g));
+  if (!pool.length) pool = d.catalog.games;
+  if (pool.length > 1 && avoid) pool = pool.filter((g) => g.id !== avoid);
+  const entry = pool[Math.floor(Math.random() * pool.length)];
+  const cat = DleCatalog.categoryInfo(entry.category);
+  const pseudo = { icon: cat.icon, url: entry.url, icon_url: DleStore.iconCandidates(entry.url)[0] || null };
+  const fresh = d.catalog.fresh.some((f) => f.id === entry.id);
+  const lines = [
+    `¿Qué tal <b>${esc(entry.name)}</b>? ${esc(cat.label)}, y no lo tienes todavía.`,
+    `Encontré esto para ti: <b>${esc(entry.name)}</b>.`,
+    `Hoy podrías probar <b>${esc(entry.name)}</b>. ¡Tiene buena pinta!`,
+  ];
+  const added = isAdded(entry);
+  $("#surprise-pop").innerHTML = `
+    <div class="pop-hero">
+      <span class="pop-bit" data-mascot="happy" data-scale="7"></span>
+      <div class="speech"><span>${lines[Math.floor(Math.random() * lines.length)]}</span></div>
+    </div>
+    <div class="pop-game">
+      ${gicon(pseudo, "xl")}
+      <div class="grow">
+        <div class="pop-name">${esc(entry.name)}</div>
+        <p class="muted small">${cat.icon} ${esc(cat.label)}${entry.themes.length ? ` · ${entry.themes.map((t) => esc(t.toLowerCase())).join(", ")}` : ""}${fresh ? ' · <span class="c-info">nuevo</span>' : ""}</p>
+        ${entry.description ? `<p class="dim small">${esc(entry.description)}</p>` : ""}
+      </div>
+    </div>
+    <footer class="modal-foot pop-actions">
+      <button type="button" class="btn ghost" data-surprise-again="${entry.id}">🎲 otro</button>
+      ${added ? `<a class="btn" href="#/game/${added.id}">✓ en tus juegos</a>` : `<button type="button" class="btn" data-add-catalog="${entry.id}">+ agregar</button>`}
+      <a class="btn primary big" href="${esc(entry.url)}" target="_blank" rel="noopener noreferrer">▶ probar ahora</a>
+    </footer>`;
+  Mascot.mountAll($("#surprise-pop"));
+  const dialog = $("#surprise-dialog");
+  if (!dialog.open) dialog.showModal();
+  dialog.querySelector(".pop-actions .btn.primary")?.focus();
+}
+
+$("#surprise-dialog").addEventListener("click", (e) => {
+  const t = e.target.closest("button, a");
+  if (!t) return;
+  if (t.dataset.surpriseAgain) openSurprisePopup(Number(t.dataset.surpriseAgain));
+  else if (t.matches('a[href^="#/game/"]')) $("#surprise-dialog").close();
+});
 
 async function addFromCatalog(id, button) {
   const entry = state.discover.catalog?.games.find((g) => g.id === Number(id));
@@ -1043,9 +1091,10 @@ async function addFromCatalog(id, button) {
     const game = await api("/api/games", { method: "POST", body: DleCatalog.toGame(entry) });
     state.games.push(game);
     toast(`${game.name} agregado a tus juegos`);
-    const card = button.closest(".cat-card");
-    card.classList.add("added");
+    button.closest(".cat-card")?.classList.add("added");
     button.outerHTML = `<a class="btn" href="#/game/${game.id}">✓ en tus juegos</a>`;
+    if (button.closest("#surprise-dialog")) refreshDiscoverResults(); // la tarjeta del listado también
+    return game;
   } catch (err) {
     button.disabled = false;
     toast(err.message, "error");
@@ -2829,11 +2878,7 @@ document.addEventListener("click", async (e) => {
       state.discover.limit += 48;
       refreshDiscoverResults();
     } else if ("surprise" in d) {
-      const pool = filteredCatalog().filter((g) => !catalogAddedIndex()(g));
-      const all = pool.length ? pool : state.discover.catalog.games;
-      state.discover.suggestion = all[Math.floor(Math.random() * all.length)].id;
-      refreshDiscoverResults();
-      $("#discover-results").scrollIntoView({ behavior: REDUCED_MOTION.matches ? "auto" : "smooth", block: "start" });
+      openSurprisePopup();
     } else if ("catalogRefresh" in d) {
       t.disabled = true;
       try {
@@ -2913,7 +2958,11 @@ function paletteCommands(query) {
   add("registrar partida", "n", () => openSessionForm());
   add("nuevo juego", "", () => openGameForm());
   add("compartir el día (copiar resumen)", "", async () => toast(await copyText(daySummaryText()) ? "resumen copiado" : "no se pudo copiar"));
-  add("sorpréndeme con un juego nuevo", "", () => { state.discover.suggestion = null; location.hash = "#/discover"; });
+  add("sorpréndeme con un juego nuevo", "", () => {
+    if (state.route === "discover") return openSurprisePopup();
+    state.discover.surprise = true;
+    location.hash = "#/discover";
+  });
   for (const t of ["sistema", "phosphor", "amber", "paper"]) add(`tema ${t}`, "", () => applyTheme(t === "sistema" ? "system" : t));
   add("sincronizar en la red local (QR)", "", () => hostPair());
   add("exportar datos (json)", "", async () => { location.hash = "#/settings"; setTimeout(() => $("#export-btn")?.click(), 300); });
