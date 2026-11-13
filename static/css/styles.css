@@ -709,14 +709,23 @@ td.notes-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; whi
 .pair-manual input { font-size: 0.85rem; letter-spacing: 0; text-transform: none; }
 @media (max-width: 560px) {
   .pair-show { grid-template-columns: 1fr; }
-  
+}
+
 /* ------------------------------------------------------------ móvil */
 @media (max-width: 760px) {
   .sidebar { display: none; }
   .titlebar .dots { display: none; }
   .content { padding: 18px 16px 32px; }
   .sb-right, .sb-session { display: none; }
-  .statusbar { height: 40px; font-size: 0.85rem; }
+  /* Menú inferior fijo al borde de la pantalla. Con «sticky» dentro de un contenedor de 100vh,
+     los navegadores móviles lo empujaban fuera de la vista al mostrar/ocultar la barra de
+     direcciones. Se deja sitio abajo para que no tape el final de la página. */
+  .statusbar {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    height: auto; min-height: 40px; font-size: 0.85rem;
+    padding: 2px max(10px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(10px, env(safe-area-inset-left));
+  }
+  .screen { padding-bottom: calc(40px + env(safe-area-inset-bottom)); }
   .sb-tabs a { padding: 6px 8px; }
   .reel-tile { flex-basis: 112px; height: 124px; }
   .reel-tile .reel-icon { width: 44px; height: 44px; font-size: 2rem; line-height: 44px; }
@@ -725,8 +734,12 @@ td.notes-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; whi
   .grid-2 { grid-template-columns: minmax(0, 1fr); }
   .cal-day .icons, .cal-day .more { display: none; }
   .cal-day .cnt { display: block; }
-  .toasts { left: 16px; right: 16px; bottom: 52px; }
-  .playing-bar { bottom: 40px; }
+  .toasts { left: 16px; right: 16px; bottom: calc(52px + env(safe-area-inset-bottom)); }
+  .playing-bar { position: fixed; left: 0; right: 0; bottom: calc(40px + env(safe-area-inset-bottom)); }
+  .screen:has(.playing-bar:not([hidden])) { padding-bottom: calc(40px + var(--playing-h, 72px) + env(safe-area-inset-bottom)); }
+  /* Mientras se escribe (teclado abierto) el menú se oculta para dejar más espacio. */
+  body:has(:is(input:not([type="checkbox"]):not([type="radio"]):not([type="color"]), textarea):focus) .statusbar,
+  body:has(:is(input:not([type="checkbox"]):not([type="radio"]):not([type="color"]), textarea):focus) .playing-bar { display: none; }
 
   .history-table thead { display: none; }
   .history-table tr { display: grid; grid-template-columns: 1fr auto; gap: 0 12px; padding: 10px 0; border-bottom: 1px dashed var(--line); }

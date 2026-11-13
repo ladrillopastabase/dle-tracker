@@ -231,6 +231,14 @@ function renderPlayingBar() {
   }).join("")}`;
 }
 
+// En el celular la barra «jugando» va fija sobre el menú: se reserva abajo su altura real
+// (varía con los juegos en curso y el ancho de pantalla) para que no tape el final de la página.
+if ("ResizeObserver" in window) {
+  new ResizeObserver(([entry]) => {
+    document.documentElement.style.setProperty("--playing-h", `${Math.ceil(entry.borderBoxSize?.[0]?.blockSize ?? entry.target.offsetHeight)}px`);
+  }).observe($("#playing-bar"));
+}
+
 setInterval(() => {
   $$("#playing-bar .pb-time").forEach((el) => { el.textContent = elapsed(Date.now() - Number(el.dataset.since)); });
   const hint = $("#elapsed-hint [data-since]");
