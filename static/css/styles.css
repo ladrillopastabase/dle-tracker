@@ -108,6 +108,9 @@ body {
   color: var(--text);
   font: 14px/1.6 var(--font);
   -webkit-font-smoothing: antialiased;
+  /* Red de seguridad en el celular: nada puede ensanchar la página hacia los lados.
+     «clip» (no «hidden») para no romper las barras fijas con position: sticky. */
+  overflow-x: clip;
 }
 /* Líneas de barrido CRT, muy sutiles. */
 body::after {
@@ -321,7 +324,7 @@ textarea { resize: vertical; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px 18px; }
 
 .segmented { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.segmented label { cursor: pointer; }
+.segmented label { cursor: pointer; position: relative; } /* contiene al radio oculto (absolute) */
 .segmented input { position: absolute; opacity: 0; pointer-events: none; }
 .segmented span { display: block; text-align: center; padding: 7px; border: 1px solid var(--line-2); color: var(--text-2); }
 .segmented label:hover span { border-color: var(--text-2); }
@@ -573,7 +576,7 @@ td.notes-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; whi
 
 /* ------------------------------------------------------------ días de la semana */
 .day-picker { display: flex; flex-wrap: wrap; gap: 6px; }
-.day-picker label { cursor: pointer; }
+.day-picker label { cursor: pointer; position: relative; }
 .day-picker input { position: absolute; opacity: 0; pointer-events: none; }
 .day-picker span { display: inline-block; min-width: 38px; text-align: center; padding: 5px 0; border: 1px solid var(--line-2); color: var(--text-2); }
 .day-picker input:checked + span { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 700; }
@@ -643,7 +646,7 @@ td.notes-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; whi
 
 /* selector de categoría e icono */
 .cat-picker { display: flex; flex-wrap: wrap; gap: 6px; }
-.cat-picker label { cursor: pointer; }
+.cat-picker label { cursor: pointer; position: relative; }
 .cat-picker input { position: absolute; opacity: 0; pointer-events: none; }
 .cat-picker span {
   display: inline-block; padding: 4px 10px; border: 1px solid var(--line-2); color: var(--text-2);
